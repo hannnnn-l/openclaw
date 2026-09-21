@@ -5,7 +5,7 @@ import { cloneEnvWithPlatformSemantics } from "../config-env-vars.js";
 import { resolveStateDir } from "../state-dir.js";
 import { resolveSqliteAgentId } from "./session-accessor.sqlite-scope.js";
 import { captureCanonicalSessionReaderContinuation } from "./session-canonical-key.js";
-import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "./session-sqlite-target.js";
+import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "./session-sqlite-target-paths.js";
 import {
   assertSessionStoreReadCandidate,
   captureSessionStoreReadCandidate,

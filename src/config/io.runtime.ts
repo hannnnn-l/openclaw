@@ -21,13 +21,12 @@ import { resolveWriteEnvSnapshotForPath } from "./env-preserve.js";
 import { GATEWAY_CONFIG_SELECTION_ENV_KEYS } from "./gateway-env-selection.js";
 import { createConfigIO } from "./io.factory.js";
 import {
-  createManagedRuntimeEnvBase,
   hashConfigRaw,
   replaceEnvSnapshot,
-  resolveManagedRuntimeEnvBaseline,
   restoreEnvChangesIfUnchanged,
   snapshotEnv,
 } from "./io.read-helpers.js";
+import { createManagedRuntimeEnvBase, resolveManagedRuntimeEnvBaseline } from "./io.runtime-env.js";
 import type {
   BestEffortConfigSnapshot,
   ConfigSnapshotReadOptions,

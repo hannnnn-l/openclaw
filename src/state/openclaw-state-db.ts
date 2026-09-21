@@ -183,8 +183,8 @@ export function withOpenClawStateStartupMigrationCheckpointDatabase<T>(
 export function initializeNativeOpenClawStateDatabase(
   options: OpenClawStateDatabaseOptions = {},
 ): void {
-  initializeNativeOpenClawStateConnection(options, (db, pathname, env) =>
-    ensureSchema(db, pathname, env, OPENCLAW_SQLITE_BUSY_TIMEOUT_MS, true),
+  initializeNativeOpenClawStateConnection(options, (db, pathname, env, initialization) =>
+    ensureSchema(db, pathname, env, initialization, OPENCLAW_SQLITE_BUSY_TIMEOUT_MS, true),
   );
 }
 
@@ -301,7 +301,8 @@ function openOpenClawStateDatabaseWithBusyTimeout(
           busyTimeoutMs,
           lockFailureReporting,
           existingSchema,
-          ensureSchema: (database) => ensureSchema(database, pathname, env, busyTimeoutMs),
+          ensureSchema: (database, initialization) =>
+            ensureSchema(database, pathname, env, initialization, busyTimeoutMs),
           recordOpenFailure: recordOpenClawStateDatabaseOpenFailure,
         }));
       },
