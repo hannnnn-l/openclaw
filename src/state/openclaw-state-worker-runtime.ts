@@ -37,7 +37,7 @@ import {
   executeOperatorApprovalCommand,
   isOperatorApprovalCommand,
 } from "../gateway/operator-approval-store.worker.js";
-import { registerSessionGroupInDatabase } from "../gateway/session-group-registration.kernel.js";
+import { mutateSessionGroupCatalogInDatabase } from "../gateway/session-group-catalog.kernel.js";
 import { isWorkerEnvironmentCommand } from "../gateway/worker-environments/store-worker-contract.js";
 import { executeWorkerEnvironmentCommand } from "../gateway/worker-environments/store.worker.js";
 import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migrations.js";
@@ -504,8 +504,8 @@ export function executeSharedStateCommand(
   if (isNodeWorkerJournalCommand(command)) {
     return executeNodeWorkerJournalCommand(command, writeOptions);
   }
-  if (command.type === "sessionGroups.register") {
-    return registerSessionGroupInDatabase(database, command.input.name, writeOptions.env);
+  if (command.type === "sessionGroups.mutate") {
+    return mutateSessionGroupCatalogInDatabase(database, command.input, writeOptions.env);
   }
   if (deliveryQueue.isDeliveryQueueCommand(command)) {
     return deliveryQueue.executeDeliveryQueueCommand(command, writeOptions);

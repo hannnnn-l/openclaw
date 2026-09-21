@@ -5,13 +5,13 @@ import * as catalogLookup from "../agents/model-catalog-lookup.js";
 import {
   assignSessionOwner,
   loadSessionEntry,
-  recordSessionParticipant,
   replaceSessionEntrySync,
 } from "../config/sessions/session-accessor.js";
 import {
   readCommittedSessionEntryCache,
   readSessionEntryCache,
 } from "../config/sessions/session-accessor.sqlite-entry-cache.js";
+import { recordSessionParticipant } from "../config/sessions/session-accessor.sqlite-participants.native.js";
 import {
   createLifecycleArtifactReclamationPlan,
   createSessionMaintenanceFinalizationOperation,

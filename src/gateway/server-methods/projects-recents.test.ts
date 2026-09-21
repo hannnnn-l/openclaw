@@ -157,6 +157,7 @@ test("projects.list returns only the caller's deterministic resolved recents", a
           ),
         ).toEqual(expected);
       }
+      expect(workerReads.mock.calls.length).toBe(0);
       replaceSessionEntrySync(
         { agentId: "main", sessionKey: "agent:main:updated-recent" },
         {
@@ -166,6 +167,8 @@ test("projects.list returns only the caller's deterministic resolved recents", a
           spawnedCwd: "/work/updated",
         },
       );
+      await projection.prepareMembership();
+      workerReads.mockClear();
       const updated = await invokeProjectMethod(
         "projects.list",
         {},

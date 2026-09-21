@@ -15,11 +15,35 @@ import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 import type { SessionListRowContext } from "./session-utils-contracts.js";
 import * as rowProjection from "./session-utils-row.js";
 
+export type SessionRowStore = {
+  target: SessionStoreTarget;
+  agentId: string;
+  discoveryAgentId: string | null;
+  discoveryOrder?: number;
+  identity: string | symbol;
+  birthtime: string | undefined;
+  filename: string;
+};
+
+/** Inodes can be reused after deletion; aliases share only the same file generation. */
+export function findStoreGeneration(
+  stores: ReadonlyMap<string, SessionRowStore>,
+  storePath: string,
+  database: Pick<SessionRowStore, "identity" | "birthtime">,
+): SessionRowStore | undefined {
+  const matches = (store: SessionRowStore) =>
+    store.identity === database.identity && store.birthtime === database.birthtime;
+  const previous = stores.get(storePath);
+  return previous && matches(previous) ? previous : [...stores.values()].find(matches);
+}
+
 export type Row = {
   key: string;
   agentId: string;
   storeTarget: SessionStoreTarget;
   storedEntry?: SessionEntry;
+  /** Current committed sharing facts remain usable while display materialization is dirty. */
+  sharingEntry?: SessionEntry;
   entry?: SessionEntry;
   selection: ReturnType<typeof readSessionListSelectionFacts>;
   materialized?: ReturnType<typeof rowProjection.materializeSessionRow>;
@@ -55,7 +79,7 @@ export const identity = (row: RowTarget) =>
   `${row.agentId}\0${row.storeTarget.storePath}\0${row.key}`;
 export const physical = (storePath: string, key: string) => `physical:${storePath}\0${key}`;
 const logical = (agentId: string, key: string) => `logical:${agentId}\0${key}`;
-export function dependents(row: Row, byParent: ReadonlyMap<string, Set<string>>) {
+function dependents(row: Row, byParent: ReadonlyMap<string, Set<string>>) {
   const children = new Set(byParent.get(logical(row.agentId, row.key)));
   const physicalChildren = byParent.get(physical(row.storeTarget.storePath, row.key));
   if (physicalChildren) {
@@ -186,6 +210,17 @@ export function present(
     row.lastMessagePreview = undefined;
   }
   return row;
+}
+
+/** The wire snapshot and lifecycle identity come from the same materialized record. */
+export function snapshot(
+  row: MaterializedRow | undefined,
+  context: SessionListRowContext,
+  options: SnapshotOptions,
+) {
+  return row
+    ? { row: present(row, context, options), lifecycleRunId: row.entry.lifecycleRunId }
+    : { row: null };
 }
 
 function updateIndex(
@@ -375,4 +410,45 @@ export function acquireSessionRowEntry(params: {
     params.markRelated(next);
   }
   return next;
+}
+
+/** Relationship reads use the same physical precedence and current entry owner as materialization. */
+export function createSessionRowRelations(params: {
+  cfg: () => Inputs["cfg"];
+  rows: ReadonlyMap<string, Row>;
+  byKey: ReadonlyMap<string, Set<string>>;
+  byParent: ReadonlyMap<string, Set<string>>;
+  dirty: ReadonlySet<string>;
+  storePaths: () => Iterable<string>;
+  readEntry: (row: Row) => SessionEntry | undefined;
+  acquireEntry: (row: Row, entry: SessionEntry | undefined) => Row | undefined;
+}) {
+  const referenced = (ref: string) =>
+    first(
+      [...(params.byKey.get(ref) ?? [])].flatMap((id) => params.rows.get(id) ?? []),
+      params.storePaths(),
+    );
+  const readSourceEntry = (row: Row, key: string) => {
+    const source = referenced(
+      parentReference(params.cfg(), key, row.agentId, row.storeTarget.storePath),
+    );
+    return (
+      source && (params.dirty.has(identity(source)) ? params.readEntry(source) : source.storedEntry)
+    );
+  };
+  const readChildLinks = (row: Row) => {
+    const links = [...dependents(row, params.byParent)].flatMap((child) => {
+      let value = params.rows.get(child);
+      if (value && params.dirty.has(child)) {
+        value = params.acquireEntry(value, params.readEntry(value));
+      }
+      return value?.entry && [...value.parents].some((ref) => referenced(ref) === row)
+        ? [{ key: value.key, entry: value.entry }]
+        : [];
+    });
+    // Keyed child refreshes reorder the parent index; presentation must stay stable.
+    links.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    return links;
+  };
+  return { referenced, readSourceEntry, readChildLinks };
 }

@@ -20,6 +20,8 @@ import { inspectExecutionIdentityRunInDatabase } from "../audit/execution-identi
 import { observeCronRunRecoveryInDatabase } from "../cron/store/run-recovery.read.js";
 import { getFleetCellInDatabase, listFleetCellsInDatabase } from "../fleet/registry.kernel.js";
 import { listTerminalOperatorApprovalsInDatabase } from "../gateway/operator-approval-store.kernel.js";
+import { readSessionGroupCatalogSnapshot } from "../gateway/session-group-catalog.kernel.js";
+import { readSessionGroupMembership } from "../gateway/session-group-membership.read.js";
 import { readWorkerSessionPlacementProjectionInDatabase } from "../gateway/worker-environments/placement-read-projection.js";
 import { readWorkerPlacementChangeSnapshotInDatabase } from "../gateway/worker-environments/placement-row-codec.js";
 import {
@@ -143,6 +145,8 @@ function isReadRequest(input: unknown): input is OpenClawStateReadRequest {
           (isRecord(input.command.input.cursor) &&
             typeof input.command.input.cursor.changedAtMs === "number" &&
             typeof input.command.input.cursor.environmentId === "string"))) ||
+      input.command.type === "sessionGroups.snapshot" ||
+      (input.command.type === "sessionGroups.members" && isRecord(input.command.cfg)) ||
       (input.command.type === "userProfiles.reconcile" &&
         typeof input.command.profileId === "string") ||
       (input.command.type === "userProfiles.email.resolve" &&
@@ -277,6 +281,22 @@ serveOwnedWorkerTasks(
                     type: command.type,
                     sourceAdmitted,
                     value: countMcpOAuthPrincipalsInDatabase(db, command.input),
+                  };
+                }
+                if (command.type === "sessionGroups.snapshot") {
+                  return {
+                    ok: true,
+                    type: command.type,
+                    sourceAdmitted: true,
+                    snapshot: readSessionGroupCatalogSnapshot(db),
+                  };
+                }
+                if (command.type === "sessionGroups.members") {
+                  return {
+                    ok: true,
+                    type: command.type,
+                    sourceAdmitted: true,
+                    snapshot: readSessionGroupMembership(command.cfg, input.context.environment),
                   };
                 }
                 if (command.type === "conversationBindings.inspect") {

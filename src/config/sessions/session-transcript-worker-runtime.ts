@@ -23,7 +23,7 @@ import {
   sessionHistoryCleanupError,
   unwrapSessionTranscriptWorkerReply,
 } from "./session-history-worker-errors.js";
-import { listSessionMembers } from "./session-sharing-store.js";
+import type { SessionMembershipFacts } from "./session-membership-facts.types.js";
 import type { SessionMember } from "./session-sharing-store.kernel.js";
 import { resolveSessionStorePathForScope } from "./session-store-path.js";
 import type { SessionStoreTargetInventoryResult } from "./session-store-target-inventory.js";
@@ -52,6 +52,7 @@ import type {
   SessionTitleFieldsWorkerResult,
   SessionRowPresenceWorkerInput,
   SessionMembersWorkerInput,
+  SessionMembershipFactsWorkerInput,
   SessionEntryListWorkerInput,
   SessionExactEntriesWorkerInput,
   SessionExactEntriesWorkerResult,
@@ -113,24 +114,6 @@ export function prepareSessionEntryPresenceRead(input: SessionAccessScope): Read
   };
 }
 
-/** Full membership evidence shares the existing read-only agent database worker. */
-export async function listSessionMembersInWorker(
-  input: SessionAccessScope,
-): Promise<SessionMember[]> {
-  const env = { ...(input.env ?? process.env) };
-  env.OPENCLAW_STATE_DIR = resolveStateDir(env);
-  const resolved = resolveSqliteScope({ ...input, env });
-  const options = toDatabaseOptions(resolved);
-  const databasePath = resolveOpenClawAgentSqlitePath(options);
-  if (isIncognitoOpenClawAgentSqlitePath(databasePath, options)) {
-    // Incognito SQLite exists only in this process and keeps its native owner.
-    return listSessionMembers({ ...input, env });
-  }
-  return await withSessionHistoryWorkerDatabase(options, (owner) =>
-    owner.readMembers({ sessionKey: resolved.sessionKey, env }),
-  );
-}
-
 /** Single and batch reads synchronously retain the same lane-aware database owner. */
 function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOptions) {
   const owned = acquireHistoryDatabaseResource(options);
@@ -158,6 +141,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
         | Omit<SessionTitleFieldsWorkerInput, "database">
         | Omit<SessionRowPresenceWorkerInput, "database">
         | Omit<SessionMembersWorkerInput, "database">
+        | Omit<SessionMembershipFactsWorkerInput, "database">
         | Omit<SessionEntryListWorkerInput, "database">
         | Omit<SessionExactEntriesWorkerInput, "database">
         | Omit<SessionIdentityEvidenceWorkerInput, "database">
@@ -171,6 +155,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
           | SessionTitleFieldsWorkerResult
           | boolean
           | SessionMember[]
+          | SessionMembershipFacts
           | SessionEntryListWorkerResult
           | SessionExactEntriesWorkerResult
           | import("./session-store-target-inventory.js").SessionStoreTargetReadResult
@@ -201,6 +186,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
             | "session-title-fields"
             | "session-row-presence"
             | "session-members"
+            | "session-membership-facts"
             | "session-entry-list"
             | "session-exact-entries"
             | "session-store-target"
@@ -252,6 +238,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
             Array.isArray(value) ||
             value.kind === "session-preview" ||
             value.kind === "session-title-fields" ||
+            value.kind === "session-membership-facts" ||
             value.kind === "session-entry-list" ||
             value.kind === "session-exact-entries" ||
             value.kind === "session-store-target" ||
@@ -311,6 +298,23 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
             ) {
               throw new Error(
                 "Session history worker returned another result instead of usage cache",
+              );
+            }
+            return value;
+          },
+        ),
+      readMembershipFacts: async (input) =>
+        await runRequest(
+          () => ({ kind: "session-membership-facts", ...input }),
+          JSON.stringify(input).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "session-membership-facts"
+            ) {
+              throw new Error(
+                "Session history worker returned another result instead of membership facts",
               );
             }
             return value;

@@ -79,10 +79,15 @@ type GatewaySessionStoreOptions = {
     target: SessionStoreTarget,
     projection: GatewaySessionEntryProjection,
   ) => ReturnType<typeof loadGatewayStoreEntries>;
-  onStoreLoaded?: (target: SessionStoreTarget, rowAgentId: string) => void;
+  onStoreLoaded?: (
+    target: SessionStoreTarget,
+    rowAgentId: string,
+    discovery: { agentId: string; order: number } | null,
+  ) => void;
 };
 
 type ResolvedGatewaySessionStoreTargets = {
+  groupDiscovery?: ReadonlyMap<string, { agentId: string; order: number }>;
   configuredAgentIds?: ReadonlySet<string>;
   defaultAgentId: string;
   diagnostics: readonly string[];
@@ -473,10 +478,19 @@ export function resolveGatewaySessionStoreTargets(
   let resolved = resolveGatewaySessionStoreTopology(cfg, opts);
   if (opts.preserveSentinelOwners === "physical") {
     const { physicalTargets, onResolvedTarget } = capturePhysicalStoreTargets();
+    // Group discovery keeps its claimant/order before the full roster adds registered stores.
+    const groupDiscovery = new Map<string, { agentId: string; order: number }>();
+    const discoveredTargets = resolveAllAgentSessionStoreTargetsSync(cfg, {
+      onResolvedTarget: ({ agentId }, physical) =>
+        groupDiscovery.set(physical.storePath, {
+          agentId,
+          order: groupDiscovery.size,
+        }),
+    });
     const durableTargets = dedupeSessionStoreTargetsBySqliteTarget(
       [
         ...resolved.durableTargets,
-        ...resolveAllAgentSessionStoreTargetsSync(cfg),
+        ...discoveredTargets,
         ...listOpenClawRegisteredAgentDatabases()
           .filter(
             ({ path }) =>
@@ -486,7 +500,7 @@ export function resolveGatewaySessionStoreTargets(
       ],
       { defaultAgentId: resolved.defaultAgentId, onResolvedTarget },
     );
-    resolved = { ...resolved, durableTargets, physicalTargets };
+    resolved = { ...resolved, durableTargets, physicalTargets, groupDiscovery };
   }
   const diagnostics = [...resolved.diagnostics];
   const admitted = (target: SessionStoreTarget): boolean => {
@@ -590,7 +604,11 @@ function mergeCombinedSessionStore(
       sharedStoreRowOwner.target.agentId === agentId
         ? sharedStoreRowOwner.agentId
         : agentId;
-    opts.onStoreLoaded?.(storeTarget, rowAgentId);
+    opts.onStoreLoaded?.(
+      storeTarget,
+      rowAgentId,
+      prepared.targets.groupDiscovery?.get(storeTarget.storePath) ?? null,
+    );
     // Completeness comes from loaded targets, even when their rows are empty or filtered.
     preparedAgentIds?.add(agentId);
     preparedAgentIds?.add(storeTarget.agentId);

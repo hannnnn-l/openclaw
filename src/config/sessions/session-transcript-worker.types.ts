@@ -36,6 +36,7 @@ import type {
   SessionHistoryWorkerRequest,
   SessionHistoryWorkerResult,
 } from "./session-history-types.js";
+import type { SessionMembershipFacts } from "./session-membership-facts.types.js";
 import type { SessionMember } from "./session-sharing-store.kernel.js";
 import type {
   SessionStoreTargetInventoryRequest,
@@ -134,6 +135,14 @@ export type SessionMembersWorkerInput = {
   env: NodeJS.ProcessEnv;
 };
 
+export type SessionMembershipFactsWorkerInput = {
+  kind: "session-membership-facts";
+  database: { agentId: string; path: string };
+  sessionKeys?: readonly string[];
+  env: NodeJS.ProcessEnv;
+  continuation?: CanonicalSessionReaderContinuation;
+};
+
 export type SessionUsageCacheWorkerInput = {
   kind: "usage-cache";
   database: { agentId: string; path: string };
@@ -204,6 +213,7 @@ export type SessionTranscriptWorkerValues = {
   "session-title-fields": SessionTitleFieldsWorkerResult;
   "session-row-presence": boolean;
   "session-members": SessionMember[];
+  "session-membership-facts": SessionMembershipFacts;
   "session-entry-list": SessionEntryListWorkerResult;
   "session-exact-entries": SessionExactEntriesWorkerResult;
   "session-store-target": SessionStoreTargetReadResult;
@@ -261,6 +271,9 @@ export type SessionHistoryWorkerDatabase = {
   readMembers: (
     input: Omit<SessionMembersWorkerInput, "kind" | "database">,
   ) => Promise<SessionMember[]>;
+  readMembershipFacts: (
+    input: Omit<SessionMembershipFactsWorkerInput, "kind" | "database">,
+  ) => Promise<SessionMembershipFacts>;
   readUsageCache: (
     input: Omit<SessionUsageCacheWorkerInput, "kind" | "database">,
   ) => Promise<SessionCostUsageCacheReadResult>;

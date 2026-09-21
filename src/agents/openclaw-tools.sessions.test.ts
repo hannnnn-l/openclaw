@@ -19,6 +19,10 @@ import {
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
 import {
+  resolveSqliteScope,
+  toDatabaseOptions,
+} from "../config/sessions/session-accessor.sqlite-scope.js";
+import {
   drainSystemEventEntries,
   peekSystemEventEntries,
   resetSystemEventsForTest,
@@ -33,11 +37,12 @@ import {
 } from "../process/gateway-work-admission.js";
 import { runWithGatewayRootWorkAdmissionForTest } from "../process/gateway-work-admission.test-helpers.js";
 import { isCompletionReportInputProvenance } from "../sessions/input-provenance.js";
-import { disposeOpenClawAgentDatabaseByPath } from "../state/openclaw-agent-db.js";
+import { runOpenClawAgentWriteAdmission } from "../state/openclaw-agent-write-admission.js";
 import { createTestRegistry } from "../test-utils/channel-plugins.js";
 import { resetAdjustedParamsByToolCallIdForTests } from "./agent-tools.before-tool-call.state.js";
 import { setActiveEmbeddedRun } from "./embedded-agent-runner/runs.js";
 import { testing as embeddedRunsTesting } from "./embedded-agent-runner/runs.test-support.js";
+import { registerSessionsSendParticipantTests } from "./openclaw-tools.sessions-participants.test-support.js";
 import { registerSessionsSendResumeTests } from "./openclaw-tools.sessions-resume.test-support.js";
 import {
   observeSessionSendContinuations,
@@ -1491,76 +1496,11 @@ describe("sessions tools", () => {
     }
   });
 
-  it.each([
-    { timeoutSeconds: 0, admitted: true },
-    { timeoutSeconds: 1, admitted: true },
-    { timeoutSeconds: 0, admitted: false },
-    { timeoutSeconds: 1, admitted: false },
-  ])(
-    "records exactly one cross-agent contribution at the original prompt time only after admission (timeoutSeconds: $timeoutSeconds, admitted: $admitted)",
-    async ({ timeoutSeconds, admitted }) => {
-      const storeTemplate = path.join(
-        tempDirs.make("openclaw-session-send-participant-"),
-        "agents/{agentId}/agent/openclaw-agent.sqlite",
-      );
-      const storePath = resolveSessionStorePathCore(storeTemplate, { agentId: "research" });
-      const scope = { agentId: "research", sessionKey: "agent:research:main", storePath };
-      const sessionId = "participant-target";
-      const promptedAt = 1_000;
-      const clock = vi.spyOn(Date, "now").mockReturnValue(promptedAt);
-      try {
-        await upsertSessionEntryCore(scope, { sessionId, updatedAt: 1 });
-        callGatewayMock.mockImplementation(async (opts: unknown) => {
-          const request = opts as GatewayCall;
-          if (request.method === "sessions.resolve") {
-            return { key: scope.sessionKey, agentId: scope.agentId };
-          }
-          if (request.method === "agent") {
-            clock.mockReturnValue(promptedAt + 100);
-            if (!admitted) {
-              throw new Error("admission rejected");
-            }
-            return { runId: "participant-run", status: "accepted" };
-          }
-          if (request.method === "agent.wait") {
-            return { status: "ok" };
-          }
-          return { messages: [] };
-        });
-        const tool = createSessionsSendTool({
-          agentSessionKey: "agent:main:main",
-          expectedTargetSessionId: sessionId,
-          config: { ...TEST_CONFIG, session: { ...TEST_CONFIG.session, store: storeTemplate } },
-          callGateway: callGatewayMock,
-        });
-        const result = await tool.execute("participant-send", {
-          sessionKey: scope.sessionKey,
-          message: "Review this input",
-          timeoutSeconds,
-        });
-        expect(result.details).toMatchObject(
-          admitted
-            ? { status: timeoutSeconds === 0 ? "accepted" : "no_reply", runId: "participant-run" }
-            : { status: "error", error: "admission rejected" },
-        );
-        expect(listSessionParticipantsReadOnly(scope).get(scope.sessionKey) ?? []).toEqual(
-          admitted
-            ? [
-                {
-                  identity: { type: "agent", id: "main" },
-                  contributionCount: 1,
-                  firstPromptedAt: promptedAt,
-                  lastPromptedAt: promptedAt,
-                },
-              ]
-            : [],
-        );
-      } finally {
-        clock.mockRestore();
-        disposeOpenClawAgentDatabaseByPath(storePath);
-      }
-    },
-  );
+  registerSessionsSendParticipantTests({
+    config: TEST_CONFIG,
+    makeTempDir: (prefix) => tempDirs.make(prefix),
+    callGatewayMock,
+  });
 
   registerSessionsSendPendingErrorTest({
     getSessionTool,
@@ -2169,6 +2109,10 @@ describe("sessions tools", () => {
     });
     expect(calls.filter((call) => call.method === "chat.history")).toHaveLength(0);
     expect(calls.filter((call) => call.method === "agent")).toHaveLength(1);
+    await runOpenClawAgentWriteAdmission(
+      toDatabaseOptions(resolveSqliteScope(parentScope)),
+      () => undefined,
+    );
     expect
       .soft(listSessionParticipantsReadOnly(parentScope).get(durableCronCallerKey))
       .toEqual([

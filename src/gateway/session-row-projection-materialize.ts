@@ -1,8 +1,10 @@
+import { performance } from "node:perf_hooks";
 import { resolveUtilityModelRefForAgent } from "../agents/utility-model.js";
 import { projectGatewaySessionEntry } from "../config/sessions/combined-store-gateway.js";
 import { readCommittedSessionEntryCache } from "../config/sessions/session-accessor.sqlite-entry-cache.js";
 import { readExactSessionEntryRow } from "../config/sessions/session-accessor.sqlite-entry-read.js";
 import { resolveSessionKeyBySessionId } from "../config/sessions/session-accessor.sqlite-entry.js";
+import { projectSqliteSessionParticipants } from "../config/sessions/session-accessor.sqlite-participant-projection.js";
 import { listSessionMembers } from "../config/sessions/session-sharing-store.js";
 import { isIncognitoSessionKey } from "../routing/session-key.js";
 import { readOpenClawAgentDatabaseIdentity } from "../state/openclaw-agent-db-identity.js";
@@ -14,6 +16,7 @@ import {
 } from "../state/openclaw-agent-db.paths.js";
 import { readSessionRowFacts } from "./server-methods/session-placement-read-projection.js";
 import { readSessionListSelectionFacts } from "./session-list-target.js";
+import { isColdArchivedSessionRow } from "./session-row-projection-archive.js";
 import * as records from "./session-row-projection-record.js";
 import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
 import type { SessionListRowContext } from "./session-utils-contracts.js";
@@ -24,10 +27,54 @@ import {
   resolveGatewaySessionStoreTargetWithStore,
 } from "./session-utils-store-lookup.js";
 
-/** One synchronous refresh slice shares agent policy; each later slice starts fresh. */
-export function createSessionRowMaterializationBatch(): typeof readResidentSessionRow {
-  const activitySummaryEnabledByAgent = new Map<string, boolean>();
-  return (params) => readResidentSessionRow(params, activitySummaryEnabledByAgent);
+/** One bounded refresh slice shares agent policy and stops at owner revision changes. */
+export function createSessionRowRefresher(owner: {
+  isActive: () => boolean;
+  prepare: () => Set<string>;
+  revision: () => number;
+  rows: ReadonlyMap<string, records.Row>;
+  acquire: (row: records.Row) => records.Row | undefined;
+  materialize: (
+    row: records.Row,
+    configuredAgentIds: Set<string>,
+    readRow: typeof readResidentSessionRow,
+  ) => boolean;
+  dirty: Set<string>;
+  removeBackfill: (id: string) => void;
+}) {
+  return (ids: readonly string[]) => {
+    if (!owner.isActive()) {
+      return;
+    }
+    const started = performance.now();
+    const configuredAgentIds = owner.prepare();
+    const activitySummaryEnabledByAgent = new Map<string, boolean>();
+    const readRow: typeof readResidentSessionRow = (params) =>
+      readResidentSessionRow(params, activitySummaryEnabledByAgent);
+    for (const [offset, id] of ids.entries()) {
+      if (offset > 0 && performance.now() - started >= 12) {
+        break;
+      }
+      const current = owner.rows.get(id),
+        revision = owner.revision();
+      const row = current && owner.acquire(current);
+      if (row && isColdArchivedSessionRow(row)) {
+        owner.dirty.delete(id);
+        owner.removeBackfill(id);
+        continue;
+      }
+      if (
+        row &&
+        owner.materialize(row, configuredAgentIds, readRow) &&
+        owner.revision() === revision
+      ) {
+        owner.dirty.delete(id);
+      }
+      if (owner.revision() !== revision) {
+        break;
+      }
+    }
+  };
 }
 
 /** Resident rows consume committed metadata; optional transcript work has a separate budget. */
@@ -112,11 +159,13 @@ export function readResidentSessionRow(
     fallbackModel: presentation.activeModel,
     facts,
     hasBoard: facts.hasBoard,
-    membership: new Set(
-      listSessionMembers({ ...row.storeTarget, sessionKey: row.key }).map(
-        (member) => member.identityId,
-      ),
-    ),
+    membership: source
+      ? new Set(
+          listSessionMembers({ ...row.storeTarget, sessionKey: row.key }).map(
+            (member) => member.identityId,
+          ),
+        )
+      : row.membership,
   };
 }
 
@@ -127,9 +176,11 @@ export function readSessionRowEntry(row: records.Row) {
         row.generation = readOpenClawAgentDatabaseIdentity(database).identity;
       }
       const cache = readCommittedSessionEntryCache(database.db);
-      return cache
-        ? cache.get(row.key)
-        : readExactSessionEntryRow(database, row.key, "list")?.entry;
+      if (cache) {
+        const entry = cache.get(row.key);
+        return entry ? projectSqliteSessionParticipants(database.db, row.key, entry) : undefined;
+      }
+      return readExactSessionEntryRow(database, row.key, "list")?.entry;
     },
     { agentId: row.storeTarget.agentId, path: row.storeTarget.storePath },
   );

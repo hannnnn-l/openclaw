@@ -78,10 +78,10 @@ it("serves describe during a 2,048-session drain without transcript reads in row
     const started = performance.now();
     const initializing = createSessionRowProjection({ cfg });
     await nextTurn();
-    const requestStarted = performance.now();
     const projection = await initializing;
     bindSessionRowProjection(context, () => projection);
     const startupMs = performance.now() - started;
+    const requestStarted = performance.now();
     const respond = vi.fn();
     try {
       await sessionByKeyReadHandlers["sessions.describe"]!({

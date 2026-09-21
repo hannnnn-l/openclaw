@@ -14,7 +14,7 @@ import { emitSessionIdentityMutation } from "../sessions/session-lifecycle-event
 import { sessionChanges } from "../sessions/session-row-changes.js";
 import { registerOpenClawAgentDatabase } from "../state/openclaw-agent-db-registry.js";
 import {
-  closeOpenClawAgentDatabaseByPath,
+  closeOpenClawAgentDatabaseByPathAsync,
   openOpenClawAgentDatabase,
   resolveOpenClawAgentSqlitePath,
 } from "../state/openclaw-agent-db.js";
@@ -403,21 +403,25 @@ it("hydrates a same-path replacement and retires its previous inventory", async 
     };
     replaceSessionEntrySync(
       { agentId: "main", storePath, sessionKey: "agent:main:old" },
-      { sessionId: "old", updatedAt: 1 },
+      { sessionId: "old", updatedAt: 1, category: "old group" },
     );
     replaceSessionEntrySync(
       { agentId: "main", storePath: staged, sessionKey: "agent:main:new" },
-      { sessionId: "new", updatedAt: 2 },
+      { sessionId: "new", updatedAt: 2, category: "new group" },
     );
-    closeOpenClawAgentDatabaseByPath(staged, "main");
+    await closeOpenClawAgentDatabaseByPathAsync(staged, "main");
     const projection = await createSessionRowProjection({ cfg });
     await projection.ensureMaterialized();
     try {
-      closeOpenClawAgentDatabaseByPath(storePath, "main");
+      expect([...projection.sessionGroupTargets().keys()]).toEqual(["old group"]);
+      await closeOpenClawAgentDatabaseByPathAsync(storePath, "main");
       renameSync(staged, storePath);
       registerOpenClawAgentDatabase({ agentId: "main", path: storePath });
       await projection.ensureMaterialized();
       expect(projection.selectEntries().map((row) => row.key)).toEqual(["agent:main:new"]);
+      expect([...projection.sessionGroupTargets()]).toEqual([
+        ["new group", [{ sessionKey: "agent:main:new", agentId: "main" }]],
+      ]);
       const sql = vi.spyOn(DatabaseSync.prototype, "prepare");
       expect(projection.snapshot({ agentId: "main", key: "agent:main:old" }).row).toBeNull();
       expect(projection.snapshot({ agentId: "main", key: "agent:main:new" }).row?.sessionId).toBe(
