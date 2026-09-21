@@ -22,6 +22,7 @@ import {
 import { ExitError } from "../runtime.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-state-db-readonly.js";
+import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import * as migrationArtifact from "./doctor-session-sqlite-artifact.js";
 import * as migrationRun from "./doctor-session-sqlite-migration-run.js";
@@ -206,6 +207,7 @@ describe("retained session source verification", () => {
     "preserves an empty-index receipt for an existing database (unindexed history: %s)",
     async (history) => {
       await withOpenClawTestState({ label: "deferred-empty-index" }, async (state) => {
+        openOpenClawStateDatabase({ env: state.env });
         const cfg: OpenClawConfig = { agents: { entries: { main: { default: true } } } };
         const directory = state.sessionsDir("main");
         fs.mkdirSync(directory, { recursive: true });
@@ -330,6 +332,7 @@ describe("retained session source verification", () => {
           },
         },
         async (state) => {
+          openOpenClawStateDatabase({ env: state.env });
           const cfg: OpenClawConfig = {
             agents: { entries: { main: { default: true }, ops: {} } },
             gateway: { mode: "local" },

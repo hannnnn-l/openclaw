@@ -16,7 +16,10 @@ import {
 } from "../infra/deferred-plugin-migrations.js";
 import * as directoryDurability from "../infra/directory-durability.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import * as migrationRun from "./doctor-session-sqlite-migration-run.js";
 import { isSessionSqliteMigrationWarning } from "./doctor-session-sqlite-types.js";
@@ -693,6 +696,7 @@ describe("session sources needed by deferred plugin migrations", () => {
     "keeps startup blocked for an empty index with %s",
     async (kind) => {
       await withOpenClawTestState({ label: "deferred-empty-index-required" }, async (state) => {
+        openOpenClawStateDatabase({ env: state.env });
         const cfg: OpenClawConfig = { agents: { entries: { main: { default: true } } } };
         const directory = state.sessionsDir("main");
         fs.mkdirSync(directory, { recursive: true });
