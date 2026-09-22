@@ -333,7 +333,7 @@ export type AgentHarnessSessionForkParams = {
 };
 
 /** Current fork contract for harnesses that can fence native side effects. */
-export type AgentHarnessSessionForkParamsV2 = AgentHarnessSessionForkParams & {
+type AgentHarnessSessionForkParamsV2 = AgentHarnessSessionForkParams & {
   /** Revalidate caller, source, and runtime policy immediately before native side effects. */
   assertCurrent: () => void;
 };

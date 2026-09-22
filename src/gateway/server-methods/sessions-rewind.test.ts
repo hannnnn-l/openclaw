@@ -313,7 +313,14 @@ function linkToUpstreamConversation(): void {
   ).toBe(true);
 }
 
-function installUpstreamForkHarness(executionEnvironment?: "host-only"): void {
+function installUpstreamForkHarness(
+  executionEnvironment?: "host-only",
+  contract: "legacy" | "v2" = "v2",
+): void {
+  const sessionFork = {
+    upstreamKinds: ["codex-app-server" as const],
+    fork: mocks.upstreamFork,
+  };
   const registry = createEmptyPluginRegistry();
   registry.agentHarnesses.push({
     pluginId: "test-harness",
@@ -324,11 +331,17 @@ function installUpstreamForkHarness(executionEnvironment?: "host-only"): void {
       runAttempt: async () => {
         throw new Error("not used");
       },
-      sessionForkV2: {
-        ...(executionEnvironment ? { executionEnvironment } : {}),
-        upstreamKinds: ["codex-app-server"],
-        fork: mocks.upstreamFork,
-      },
+      ...(contract === "legacy"
+        ? {
+            ...(executionEnvironment ? { executionEnvironment } : {}),
+            sessionFork,
+          }
+        : {
+            sessionForkV2: {
+              ...(executionEnvironment ? { executionEnvironment } : {}),
+              ...sessionFork,
+            },
+          }),
       supports: () => ({ supported: false }),
     },
   });
@@ -784,53 +797,56 @@ describe("session message-cut methods", () => {
     );
   });
 
-  it("rejects the current creator's required sandbox before invoking a host-only upstream fork", async () => {
-    const profile = ensureProfileForEmail("sandbox-required-upstream-fork@example.com");
-    setUserProfileRole(profile.id, "guest");
-    const client = {
-      connect: { scopes: ["operator.write"] },
-      authenticatedUserProfile: {
-        profileId: profile.id,
-        displayName: profile.displayName,
-        hasAvatar: false,
-        updatedAt: profile.updatedAt,
-      },
-    } as GatewayClient;
-    const runtimeConfig: GatewayRequestContext["getRuntimeConfig"] = () => ({
-      agents: { list: [{ id: "main", default: true }] },
-      gateway: {
-        roles: {
-          default: "guest",
-          definitions: {
-            guest: {
-              sessions: { others: "view" },
-              agents: ["main"],
-              scopes: ["operator.read", "operator.write"],
-              sandbox: "required",
+  it.each(["legacy", "v2"] as const)(
+    "rejects the current creator's required sandbox before invoking a host-only %s upstream fork",
+    async (contract) => {
+      const profile = ensureProfileForEmail(`sandbox-required-${contract}-fork@example.com`);
+      setUserProfileRole(profile.id, "guest");
+      const client = {
+        connect: { scopes: ["operator.write"] },
+        authenticatedUserProfile: {
+          profileId: profile.id,
+          displayName: profile.displayName,
+          hasAvatar: false,
+          updatedAt: profile.updatedAt,
+        },
+      } as GatewayClient;
+      const runtimeConfig: GatewayRequestContext["getRuntimeConfig"] = () => ({
+        agents: { list: [{ id: "main", default: true }] },
+        gateway: {
+          roles: {
+            default: "guest",
+            definitions: {
+              guest: {
+                sessions: { others: "view" },
+                agents: ["main"],
+                scopes: ["operator.read", "operator.write"],
+                sandbox: "required",
+              },
             },
           },
         },
-      },
-    });
-    linkToUpstreamConversation();
-    installUpstreamForkHarness("host-only");
-    const fork = await withPluginRuntimeGatewayRequestScope(
-      { client, isWebchatConnect: () => false },
-      () => invoke("sessions.fork", "user-entry", client, false, runtimeConfig),
-    );
-    expect(fork).toHaveBeenCalledWith(
-      false,
-      undefined,
-      expect.objectContaining({
-        details: expect.objectContaining({
-          code: "AGENT_RUNTIME_RESTRICTED",
-          reason: "sandbox-required",
+      });
+      linkToUpstreamConversation();
+      installUpstreamForkHarness("host-only", contract);
+      const fork = await withPluginRuntimeGatewayRequestScope(
+        { client, isWebchatConnect: () => false },
+        () => invoke("sessions.fork", "user-entry", client, false, runtimeConfig),
+      );
+      expect(fork).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({
+          details: expect.objectContaining({
+            code: "AGENT_RUNTIME_RESTRICTED",
+            reason: "sandbox-required",
+          }),
         }),
-      }),
-    );
-    expect(mocks.upstreamFork).not.toHaveBeenCalled();
-    expect(listSessionEntriesCore({ agentId: "main" })).toHaveLength(1);
-  });
+      );
+      expect(mocks.upstreamFork).not.toHaveBeenCalled();
+      expect(listSessionEntriesCore({ agentId: "main" })).toHaveLength(1);
+    },
+  );
 
   it("does not mutate the local session when the upstream fork fails", async () => {
     linkToUpstreamConversation();

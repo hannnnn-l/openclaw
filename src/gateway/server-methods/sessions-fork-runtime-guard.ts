@@ -108,12 +108,11 @@ export function createUpstreamForkCurrentGuard(params: {
   };
   const assertCurrent = () => {
     const { currentConfig, currentForkHarness, source, sourceEntry } = readCurrent();
-    if (currentForkHarness.contract !== "v2") {
-      return;
-    }
     const executionEnvironment =
-      currentForkHarness.sessionFork.executionEnvironment ??
-      currentForkHarness.harness.executionEnvironment;
+      currentForkHarness.contract === "v2"
+        ? (currentForkHarness.sessionFork.executionEnvironment ??
+          currentForkHarness.harness.executionEnvironment)
+        : currentForkHarness.harness.executionEnvironment;
     if (executionEnvironment !== "host-only") {
       return;
     }
@@ -146,10 +145,8 @@ export function createUpstreamForkCurrentGuard(params: {
   };
   return {
     assertCurrent,
-    // Rollback keeps the accepted initializer's caller, source, and owner current,
-    // but cannot repeat policy that is meant to stop forward native execution.
-    assertRollbackCurrent: () => {
-      readCurrent();
-    },
+    // After capture, the child initializer and plugin own rollback independently;
+    // their target, registry, binding, and thread fences replace forward authority.
+    assertRollbackCurrent: () => undefined,
   };
 }

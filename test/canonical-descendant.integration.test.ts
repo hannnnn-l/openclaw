@@ -32,7 +32,10 @@ import {
 import { writeSessionEntry } from "../src/config/sessions/session-accessor.sqlite-entry-store.js";
 import type { OpenClawConfig } from "../src/config/types.openclaw.js";
 import { sessionRewindHandlers } from "../src/gateway/server-methods/sessions-rewind.js";
-import type { GatewayRequestContext } from "../src/gateway/server-methods/types.js";
+import type {
+  GatewayRequestContext,
+  GatewayRequestHandlerOptions,
+} from "../src/gateway/server-methods/types.js";
 import { createWorkerSessionPlacementStore } from "../src/gateway/worker-environments/placement-store.js";
 import { seedAttachedPlacementEnvironment } from "../src/gateway/worker-environments/placement-test-fixtures.js";
 import { readCodexSessionTranscriptEventsBeforeAdmission } from "../src/plugin-sdk/codex-session-transcript-runtime.js";
@@ -127,6 +130,7 @@ async function withFixture(
     codexPlugins?: Parameters<typeof createCanonicalForkFixtureForTest>[0]["codexPlugins"];
     desktopGenerationFingerprint?: string;
     senderIsOwner?: boolean;
+    sessionMutationAuthorization?: GatewayRequestHandlerOptions["sessionMutationAuthorization"];
     transcript?: { display?: false; excludeFromContext?: true };
     mcpResolver?: OpenClawPluginMcpServerConnectionResolver;
   } = {},
@@ -428,6 +432,7 @@ async function withFixture(
             params: request,
             client: null,
             isWebchatConnect: () => false,
+            sessionMutationAuthorization: options.sessionMutationAuthorization,
             // SAFETY: these are the complete Gateway collaborators used by the real fork handler.
             context: {
               getRuntimeConfig: () => config,
@@ -1022,9 +1027,13 @@ describe("canonical descendant lifecycle through real owners", () => {
     180_000,
   );
 
-  it.each(["source", "child", "registry"] as const)(
-    "retires the exact subscription after %s revocation following native fork without killing sibling leases",
-    async (target) => {
+  it.each([
+    ["source", true],
+    ["child", false],
+    ["registry", false],
+  ] as const)(
+    "uses captured rollback ownership after %s revocation following native fork",
+    async (target, rollbackAllowed) => {
       await withFixture(async (fixture, fork, revoke) => {
         const source = await fixture.adopt();
         const binding = await fixture.turn(source.sessionKey, "canonical");
@@ -1042,14 +1051,18 @@ describe("canonical descendant lifecycle through real owners", () => {
           expect(fresh).toBeTruthy();
           expect(
             fixture.native.calls.filter((call) => call.method === "thread/archive"),
-          ).toHaveLength(archiveCount);
+          ).toHaveLength(archiveCount + (rollbackAllowed ? 1 : 0));
           await expect(client.request("config/read", {})).resolves.toMatchObject({ config: {} });
           await fixture.withClient(async (next) => {
-            expect(next).not.toBe(client);
+            if (rollbackAllowed) {
+              expect(next).toBe(client);
+            } else {
+              expect(next).not.toBe(client);
+            }
           });
           expect(fixture.native.threads.has(binding.threadId)).toBe(true);
           expect(fixture.native.threads.has("original")).toBe(true);
-          expect(fixture.native.threads.has(fresh!)).toBe(true);
+          expect(fixture.native.threads.has(fresh!)).toBe(!rollbackAllowed);
         });
         await vi.waitFor(() =>
           expect([...fixture.native.subscriptions].some((key) => key.endsWith(`:${fresh}`))).toBe(
@@ -1759,6 +1772,7 @@ describe("canonical descendant lifecycle through real owners", () => {
     ["null model", /model/i],
     ["model changed during preparation", /canonical Codex source changed/],
     ["provider changed during preparation", /canonical Codex source changed/],
+    ["request authorization changed after native fork", /request authorization changed/],
     ["sandbox policy changed during initialization", /requires a sandbox/],
     ["catalog mismatch", /native tool catalog is missing, corrupt, or changed/],
     ["child catalog", /did not preserve the actual native tool catalog/],
@@ -1773,6 +1787,7 @@ describe("canonical descendant lifecycle through real owners", () => {
   ])(
     "refuses %s without publishing an unsafe child",
     async (failure, expectedError) => {
+      let requestAuthorized = true;
       await withFixture(
         async (fixture, fork, _revoke, _admissions, runtime) => {
           const source = await fixture.adopt();
@@ -1845,6 +1860,11 @@ describe("canonical descendant lifecycle through real owners", () => {
           if (failure === "child lineage") {
             fixture.native.setForkFault("lineage");
           }
+          if (failure === "request authorization changed after native fork") {
+            fixture.native.setAfterFork(() => {
+              requestAuthorized = false;
+            });
+          }
           if (failure === "sandbox policy changed during initialization") {
             fixture.native.setAfterFork(() => {
               const sourceEntry = expectDefined(
@@ -1890,7 +1910,10 @@ describe("canonical descendant lifecycle through real owners", () => {
               fixture.native.calls.filter((call) => call.method === "thread/fork"),
             ).toHaveLength(countBefore);
           }
-          if (failure === "sandbox policy changed during initialization") {
+          if (
+            failure === "request authorization changed after native fork" ||
+            failure === "sandbox policy changed during initialization"
+          ) {
             expect(
               listSessionEntriesCore({ agentId: "main", storePath: fixture.storePath }).filter(
                 ({ entry }) => !existingSessions.has(entry.sessionId),
@@ -1905,7 +1928,21 @@ describe("canonical descendant lifecycle through real owners", () => {
             bindingBefore,
           );
         },
-        { senderIsOwner: true },
+        {
+          senderIsOwner: true,
+          ...(failure === "request authorization changed after native fork"
+            ? {
+                sessionMutationAuthorization: {
+                  assertCurrent: () => {
+                    if (!requestAuthorized) {
+                      throw new Error("request authorization changed");
+                    }
+                  },
+                  assertTargetCurrent: vi.fn(),
+                },
+              }
+            : {}),
+        },
       );
     },
     180_000,
