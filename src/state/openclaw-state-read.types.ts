@@ -5,6 +5,8 @@ import type {
   SandboxBrowserRegistryEntry,
   SandboxRegistryEntry,
 } from "../agents/sandbox/registry.types.js";
+import type { SubagentRunReadRecord } from "../agents/subagents/registry/subagent-registry-read.types.js";
+import type { SubagentRunRecord } from "../agents/subagents/registry/subagent-registry.types.js";
 import type { WorkspaceStateSnapshot } from "../agents/workspace-state-store.kernel.js";
 import type {
   ExecutionIdentityInspectionQuery,
@@ -40,6 +42,7 @@ import type {
 } from "../infra/outbound/session-binding.types.js";
 import type { SqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
 import type {
+  readInterruptedUpdateCandidate,
   readUpdateRunRecord,
   readUpdateRuns,
   UpdateRunListInput,
@@ -84,6 +87,11 @@ export type OpenClawStateReadCommand =
       input: ListTerminalOperatorApprovalsInput;
     }
   | PluginBlobReadCommand
+  | { type: "subagents.sessionList" }
+  | {
+      type: "subagents.runs";
+      scope: { kind: "session"; sessionKey: string } | { kind: "ids"; runIds: readonly string[] };
+    }
   | CronRunRecoveryReadCommand
   | { type: "exec-approvals.read" }
   | {
@@ -101,6 +109,7 @@ export type OpenClawStateReadCommand =
   | { type: "audit.run.inspect"; input: ExecutionIdentityInspectionQuery }
   | { type: "updateRuns.get"; runId: string }
   | { type: "updateRuns.list"; input: UpdateRunListInput }
+  | { type: "updateRuns.interruptedCandidate" }
   | { type: "fleet.list" }
   | { type: "workerPlacements.changeSnapshot" }
   | { type: "fleet.get"; tenantId: string }
@@ -169,6 +178,19 @@ export type OpenClawStateReadReply = (
     }
   | {
       ok: true;
+      type: "subagents.sessionList";
+      sourceAdmitted: true;
+      runs: Map<string, SubagentRunReadRecord>;
+    }
+  | {
+      ok: true;
+      type: "subagents.sessionList";
+      sourceAdmitted: true;
+      unavailable: { message: string; error: OpenClawStateWorkerErrorPayload | undefined };
+    }
+  | { ok: true; type: "subagents.runs"; sourceAdmitted: true; runs: Map<string, SubagentRunRecord> }
+  | {
+      ok: true;
       type: "agentDatabaseRegistry.read";
       sourceAdmitted?: true;
       result: OpenClawAgentDatabaseRegistryReadResult;
@@ -221,6 +243,12 @@ export type OpenClawStateReadReply = (
       type: "updateRuns.list";
       sourceAdmitted: true;
       runs: ReturnType<typeof readUpdateRuns>;
+    }
+  | {
+      ok: true;
+      type: "updateRuns.interruptedCandidate";
+      sourceAdmitted: true;
+      run: ReturnType<typeof readInterruptedUpdateCandidate>;
     }
   | { ok: true; type: "fleet.list"; sourceAdmitted: true; cells: FleetCellRecord[] }
   | {
