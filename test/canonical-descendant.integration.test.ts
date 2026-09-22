@@ -1002,9 +1002,12 @@ describe("canonical descendant lifecycle through real owners", () => {
     180_000,
   );
 
-  it.each(["source", "registry"] as const)(
-    "fences native archive retries after %s rollback authority is revoked",
-    async (target) => {
+  it.each([
+    ["source", 2, 0],
+    ["registry", 1, 1],
+  ] as const)(
+    "keeps native archive overload retry within captured rollback after %s revocation",
+    async (target, attempts, retained) => {
       await withFixture(async (fixture, fork, revoke) => {
         const source = await fixture.adopt();
         const binding = await fixture.turn(source.sessionKey, "canonical");
@@ -1018,8 +1021,10 @@ describe("canonical descendant lifecycle through real owners", () => {
         expect((await fork(source.sessionKey, selected.entryId)).ok).toBe(false);
         expect(
           fixture.native.calls.filter((call) => call.method === "thread/archive"),
-        ).toHaveLength(archiveCount + 1);
-        expect([...fixture.native.threads.keys()].filter((id) => !before.has(id))).toHaveLength(1);
+        ).toHaveLength(archiveCount + attempts);
+        expect([...fixture.native.threads.keys()].filter((id) => !before.has(id))).toHaveLength(
+          retained,
+        );
         expect(fixture.native.threads.has(binding.threadId)).toBe(true);
         expect(fixture.native.threads.has("original")).toBe(true);
       });
