@@ -135,12 +135,15 @@ export async function forkCodexUpstreamSession(
       let threadId: string;
       try {
         // beforeTurnId is experimental; the initialized shared client explicitly negotiates it.
-        const rawResponse = await control.forkThread({
-          threadId: sourceThreadId,
-          beforeTurnId: resolved.boundary.beforeTurnId,
-          ...(params.sandbox === "required" ? { sandbox: "workspace-write" as const } : {}),
-          excludeTurns: true,
-        });
+        const rawResponse = await control.forkThread(
+          {
+            threadId: sourceThreadId,
+            beforeTurnId: resolved.boundary.beforeTurnId,
+            ...(params.sandbox === "required" ? { sandbox: "workspace-write" as const } : {}),
+            excludeTurns: true,
+          },
+          params.assertCurrent,
+        );
         // Malformed responses do not establish ownership of any purported orphan id.
         response = assertCodexThreadForkResponse(rawResponse);
         threadId = response.thread.id.trim();

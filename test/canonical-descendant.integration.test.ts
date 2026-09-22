@@ -1725,38 +1725,25 @@ describe("canonical descendant lifecycle through real owners", () => {
     180_000,
   );
 
-  it("refuses a creator-required environment before native fork", async () => {
-    await withFixture(async (fixture) => {
+  it("refuses a stored required environment through the registered fork before native I/O", async () => {
+    await withFixture(async (fixture, fork) => {
       const source = await fixture.adopt();
       await fixture.turn(source.sessionKey, "canonical");
+      const sourceEntry = expectDefined(
+        loadSessionEntry({ sessionKey: source.sessionKey, storePath: fixture.storePath }),
+        "source entry",
+      );
+      runOpenClawAgentWriteTransaction(
+        (database) =>
+          writeSessionEntry(database, source.sessionKey, { ...sourceEntry, sandbox: "required" }),
+        { agentId: "main" },
+      );
       const entries = await fixture.readEntries(source.sessionKey);
       const before = fixture.native.calls.filter((call) => call.method === "thread/fork").length;
-      const link = expectDefined(readSessionUpstreamLink(source.sessionKey, "main"), "root link");
-      const harness = expectDefined(
-        listRegisteredAgentHarnesses()[0]?.harness,
-        "registered harness",
-      );
-      const result = await expectDefined(harness.sessionFork, "registered fork capability").fork({
-        targetKey: "agent:main:dashboard:required-environment",
-        sandbox: "required",
-        source: {
-          agentId: "main",
-          sessionId: fixture.identity(source.sessionKey).sessionId,
-          sessionKey: source.sessionKey,
-          storePath: fixture.storePath,
-          entryId: entries.at(-1)!.entryId,
-        },
-        upstream: {
-          catalogId: link.catalogId,
-          hostId: link.hostId,
-          threadId: link.threadId,
-          kind: link.upstreamKind,
-          ref: link.upstreamRef,
-        },
-      });
+      const result = await fork(source.sessionKey, entries.at(-1)!.entryId);
       expect(result).toMatchObject({
-        status: "failed",
-        message: expect.stringMatching(/execution environment/),
+        ok: false,
+        message: expect.stringMatching(/requires a sandbox/),
       });
       expect(fixture.native.calls.filter((call) => call.method === "thread/fork")).toHaveLength(
         before,

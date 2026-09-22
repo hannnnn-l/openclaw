@@ -153,6 +153,7 @@ export function createCodexAppServerAgentHarness(
     ...(sessionCatalogControlFactory && sessionRuntime
       ? {
           sessionFork: {
+            executionEnvironment: "host-only" as const,
             upstreamKinds: ["codex-app-server"] as const,
             fork: async (params) => {
               const { forkCodexUpstreamSession } =

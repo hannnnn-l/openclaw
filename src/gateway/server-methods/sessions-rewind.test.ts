@@ -52,7 +52,6 @@ import {
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
 import { withPluginRuntimeGatewayRequestScope } from "../../plugins/runtime/gateway-request-scope.js";
-import { createRuntimeAgent } from "../../plugins/runtime/runtime-agent.js";
 import { runExclusiveSessionLifecycleMutation } from "../../sessions/session-lifecycle-admission.js";
 import { listSessionStateEventsSince } from "../../sessions/session-state-events.js";
 import { upsertSessionUpstreamLink } from "../../sessions/session-upstream-links.js";
@@ -314,7 +313,7 @@ function linkToUpstreamConversation(): void {
   ).toBe(true);
 }
 
-function installUpstreamForkHarness(): void {
+function installUpstreamForkHarness(executionEnvironment?: "host-only"): void {
   const registry = createEmptyPluginRegistry();
   registry.agentHarnesses.push({
     pluginId: "test-harness",
@@ -326,6 +325,7 @@ function installUpstreamForkHarness(): void {
         throw new Error("not used");
       },
       sessionFork: {
+        ...(executionEnvironment ? { executionEnvironment } : {}),
         upstreamKinds: ["codex-app-server"],
         fork: mocks.upstreamFork,
       },
@@ -784,7 +784,7 @@ describe("session message-cut methods", () => {
     );
   });
 
-  it("preserves the authenticated creator and required sandbox when a harness materializes an upstream fork", async () => {
+  it("rejects the current creator's required sandbox before invoking a host-only upstream fork", async () => {
     const profile = ensureProfileForEmail("sandbox-required-upstream-fork@example.com");
     setUserProfileRole(profile.id, "guest");
     const client = {
@@ -813,34 +813,23 @@ describe("session message-cut methods", () => {
       },
     });
     linkToUpstreamConversation();
-    installUpstreamForkHarness();
-    mocks.upstreamFork.mockImplementation(async ({ targetKey }: { targetKey: string }) => {
-      const created = await createRuntimeAgent().session.createSessionEntry({
-        cfg: runtimeConfig(),
-        key: targetKey,
-        initialEntry: { agentHarnessId: "test-harness" },
-      });
-      return { status: "created", key: created.key };
-    });
-
+    installUpstreamForkHarness("host-only");
     const fork = await withPluginRuntimeGatewayRequestScope(
       { client, isWebchatConnect: () => false },
       () => invoke("sessions.fork", "user-entry", client, false, runtimeConfig),
     );
-    const forkKey = (fork.mock.calls[0]?.[1] as { sessionKey?: string } | undefined)?.sessionKey;
-
     expect(fork).toHaveBeenCalledWith(
-      true,
-      expect.objectContaining({ sessionKey: expect.any(String) }),
+      false,
       undefined,
+      expect.objectContaining({
+        details: expect.objectContaining({
+          code: "AGENT_RUNTIME_RESTRICTED",
+          reason: "sandbox-required",
+        }),
+      }),
     );
-    expect(mocks.upstreamFork).toHaveBeenCalledWith(
-      expect.objectContaining({ sandbox: "required" }),
-    );
-    expect(loadSessionEntry({ agentId: "main", sessionKey: forkKey ?? "" })).toMatchObject({
-      createdActor: { type: "human", id: profile.id },
-      sandbox: "required",
-    });
+    expect(mocks.upstreamFork).not.toHaveBeenCalled();
+    expect(listSessionEntriesCore({ agentId: "main" })).toHaveLength(1);
   });
 
   it("does not mutate the local session when the upstream fork fails", async () => {

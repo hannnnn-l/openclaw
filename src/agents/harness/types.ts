@@ -316,6 +316,8 @@ export type AgentHarnessSessionForkParams = {
   targetKey: string;
   /** Creator-owned isolation floor resolved by the trusted Gateway request. */
   sandbox?: "required";
+  /** Revalidate caller, source, and runtime policy immediately before native side effects. */
+  assertCurrent: () => void;
   source: {
     agentId: string;
     sessionId: string;
@@ -498,6 +500,8 @@ type AgentHarnessSessionLifecycleCapability = {
 
 type AgentHarnessSessionForkCapability = {
   sessionFork?: {
+    /** Declares fork initialization that can execute work on the Gateway host. */
+    executionEnvironment?: "host-only";
     upstreamKinds: readonly import("../../plugins/session-catalog.js").SessionUpstreamKind[];
     fork(params: AgentHarnessSessionForkParams): Promise<AgentHarnessSessionForkResult>;
   };

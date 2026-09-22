@@ -137,6 +137,7 @@ export async function forkCanonicalCodexSession(params: {
             },
           });
           const assertCurrent = () => {
+            fork.assertCurrent();
             initialization.assertCurrent();
             if (ownership && !subscriptionReleased) {
               ownership.assertCurrent();

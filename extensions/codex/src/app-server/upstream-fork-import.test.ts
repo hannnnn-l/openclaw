@@ -210,11 +210,14 @@ describe("fork boundaries from imported Codex history", () => {
       const child = await createSession.mock.results[0]!.value;
       expect(result).toEqual({ status: "created", key: targetKey, editorText: "edit me" });
 
-      expect(forkThread).toHaveBeenCalledExactlyOnceWith({
-        threadId: history.thread.id,
-        beforeTurnId: "turn-2",
-        excludeTurns: true,
-      });
+      expect(forkThread).toHaveBeenCalledExactlyOnceWith(
+        {
+          threadId: history.thread.id,
+          beforeTurnId: "turn-2",
+          excludeTurns: true,
+        },
+        expect.any(Function),
+      );
       expect(child.entry.label).toBeUndefined();
       expect(createSession.mock.calls[0]?.[0]).not.toHaveProperty("label");
       expect(createSession.mock.calls[0]?.[0]).not.toHaveProperty("displayName");
