@@ -334,7 +334,7 @@ export type AgentHarnessSessionForkParams = {
 
 /** Current fork contract for harnesses that can fence native side effects. */
 type AgentHarnessSessionForkParamsV2 = AgentHarnessSessionForkParams & {
-  /** Revalidate caller, source, and runtime policy immediately before native side effects. */
+  /** Revalidate immediately before native side effects; this authority closes when fork settles. */
   assertCurrent: () => void;
 };
 
