@@ -256,6 +256,7 @@ async function runStateLeaseOwnerInScope<T>(
           failures[0],
         );
       }
+      workerHeartbeat = undefined;
       heartbeatStopped = true;
       if (
         confirmedExpiresAt !== undefined &&
