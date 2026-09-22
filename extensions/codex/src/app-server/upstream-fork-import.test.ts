@@ -181,6 +181,7 @@ describe("fork boundaries from imported Codex history", () => {
       const result = await forkCodexUpstreamSession(
         {
           targetKey,
+          assertCurrent: () => {},
           source: { ...history.target, entryId: history.users.at(-1)!.entryId },
           upstream: {
             catalogId: "codex",
