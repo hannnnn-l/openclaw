@@ -162,7 +162,7 @@ export function createRetainedAgentDatabaseMatcher(
       [resolveOpenClawStateSqlitePath(env), ...namespace.readDatabasePaths()]
         .flatMap(resolveSqliteDatabaseFilePaths)
         .some((file) => fs.lstatSync(file, { throwIfNoEntry: false }) !== undefined) ||
-      readConfiguredTargets().some(({ path }) => hasSqliteArtifacts(path));
+      readConfiguredTargets().some((target) => hasSqliteArtifacts(target.path));
     return (directory: string, _agentId?: string) => unavailable || hasSqliteArtifacts(directory);
   }
   const retainedDeletions = snapshot?.retainedDeletions;
