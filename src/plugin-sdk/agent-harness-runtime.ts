@@ -114,6 +114,7 @@ export type {
   AgentHarnessSessionDeletionMutation,
   AgentHarnessSessionForkFailureCode,
   AgentHarnessSessionForkParams,
+  AgentHarnessSessionForkParamsV2,
   AgentHarnessSessionForkResult,
   AgentHarnessSupport,
   AgentHarnessSupportContext,

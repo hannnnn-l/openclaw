@@ -409,7 +409,9 @@ async function withFixture(
         );
         const fork = async (sessionKey: string, entryId: string) => {
           expect(
-            listRegisteredAgentHarnesses().map((entry) => entry.harness.sessionFork?.upstreamKinds),
+            listRegisteredAgentHarnesses().map(
+              (entry) => entry.harness.sessionForkV2?.upstreamKinds,
+            ),
           ).toEqual([["codex-app-server"]]);
           let result: { ok: boolean; key?: string; message?: string } | undefined;
           const request = { sessionKey, entryId };
@@ -1757,6 +1759,7 @@ describe("canonical descendant lifecycle through real owners", () => {
     ["null model", /model/i],
     ["model changed during preparation", /canonical Codex source changed/],
     ["provider changed during preparation", /canonical Codex source changed/],
+    ["sandbox policy changed during initialization", /requires a sandbox/],
     ["catalog mismatch", /native tool catalog is missing, corrupt, or changed/],
     ["child catalog", /did not preserve the actual native tool catalog/],
     ["child model", /did not preserve the exact canonical source and selected native model/],
@@ -1784,6 +1787,9 @@ describe("canonical descendant lifecycle through real owners", () => {
           const messages = await fixture.readEntries(source.sessionKey);
           const countBefore = fixture.native.calls.filter(
             (call) => call.method === "thread/fork",
+          ).length;
+          const archivesBefore = fixture.native.calls.filter(
+            (call) => call.method === "thread/archive",
           ).length;
           const current = expectDefined(fixture.native.threads.get(binding.threadId), "canonical");
           const create = runtime.agent.session.createSessionEntry;
@@ -1839,6 +1845,25 @@ describe("canonical descendant lifecycle through real owners", () => {
           if (failure === "child lineage") {
             fixture.native.setForkFault("lineage");
           }
+          if (failure === "sandbox policy changed during initialization") {
+            fixture.native.setAfterFork(() => {
+              const sourceEntry = expectDefined(
+                loadSessionEntry({
+                  sessionKey: source.sessionKey,
+                  storePath: fixture.storePath,
+                }),
+                "source policy entry",
+              );
+              runOpenClawAgentWriteTransaction(
+                (database) =>
+                  writeSessionEntry(database, source.sessionKey, {
+                    ...sourceEntry,
+                    sandbox: "required",
+                  }),
+                { agentId: "main" },
+              );
+            });
+          }
           if (failure === "unsubscribe failure") {
             fixture.native.setFailUnsubscribe(true);
           }
@@ -1864,6 +1889,16 @@ describe("canonical descendant lifecycle through real owners", () => {
             expect(
               fixture.native.calls.filter((call) => call.method === "thread/fork"),
             ).toHaveLength(countBefore);
+          }
+          if (failure === "sandbox policy changed during initialization") {
+            expect(
+              listSessionEntriesCore({ agentId: "main", storePath: fixture.storePath }).filter(
+                ({ entry }) => !existingSessions.has(entry.sessionId),
+              ),
+            ).toEqual([]);
+            expect(
+              fixture.native.calls.filter((call) => call.method === "thread/archive"),
+            ).toHaveLength(archivesBefore + 1);
           }
           expect(fixture.native.source).toEqual(sourceBefore);
           expect(fixture.bindingStore.read(fixture.identity(source.sessionKey))).toEqual(

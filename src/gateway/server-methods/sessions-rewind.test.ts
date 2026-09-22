@@ -324,7 +324,7 @@ function installUpstreamForkHarness(executionEnvironment?: "host-only"): void {
       runAttempt: async () => {
         throw new Error("not used");
       },
-      sessionFork: {
+      sessionForkV2: {
         ...(executionEnvironment ? { executionEnvironment } : {}),
         upstreamKinds: ["codex-app-server"],
         fork: mocks.upstreamFork,

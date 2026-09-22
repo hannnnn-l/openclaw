@@ -316,8 +316,6 @@ export type AgentHarnessSessionForkParams = {
   targetKey: string;
   /** Creator-owned isolation floor resolved by the trusted Gateway request. */
   sandbox?: "required";
-  /** Revalidate caller, source, and runtime policy immediately before native side effects. */
-  assertCurrent: () => void;
   source: {
     agentId: string;
     sessionId: string;
@@ -332,6 +330,12 @@ export type AgentHarnessSessionForkParams = {
     threadId: string;
     ref: import("../../plugins/session-catalog.js").SessionUpstreamJsonValue;
   };
+};
+
+/** Current fork contract for harnesses that can fence native side effects. */
+export type AgentHarnessSessionForkParamsV2 = AgentHarnessSessionForkParams & {
+  /** Revalidate caller, source, and runtime policy immediately before native side effects. */
+  assertCurrent: () => void;
 };
 
 export type AgentHarnessSessionForkResult =
@@ -499,11 +503,19 @@ type AgentHarnessSessionLifecycleCapability = {
 };
 
 type AgentHarnessSessionForkCapability = {
+  /**
+   * @deprecated Use sessionForkV2. This legacy fork contract remains
+   * source-compatible through 2026-10-12.
+   */
   sessionFork?: {
+    upstreamKinds: readonly import("../../plugins/session-catalog.js").SessionUpstreamKind[];
+    fork(params: AgentHarnessSessionForkParams): Promise<AgentHarnessSessionForkResult>;
+  };
+  sessionForkV2?: {
     /** Declares fork initialization that can execute work on the Gateway host. */
     executionEnvironment?: "host-only";
     upstreamKinds: readonly import("../../plugins/session-catalog.js").SessionUpstreamKind[];
-    fork(params: AgentHarnessSessionForkParams): Promise<AgentHarnessSessionForkResult>;
+    fork(params: AgentHarnessSessionForkParamsV2): Promise<AgentHarnessSessionForkResult>;
   };
 };
 

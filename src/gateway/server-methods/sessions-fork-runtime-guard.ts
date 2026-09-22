@@ -15,16 +15,34 @@ import type { GatewayClient, GatewayRequestContext } from "./types.js";
 
 export type UpstreamForkHarness = {
   harness: AgentHarness;
-  sessionFork: NonNullable<AgentHarness["sessionFork"]>;
+} & (
+  | {
+      contract: "legacy";
+      sessionFork: NonNullable<AgentHarness["sessionFork"]>;
+    }
+  | {
+      contract: "v2";
+      sessionFork: NonNullable<AgentHarness["sessionForkV2"]>;
+    }
+);
+
+export type UpstreamForkCurrentGuard = {
+  assertCurrent: () => void;
+  assertRollbackCurrent: () => void;
 };
 
 export function resolveUpstreamForkHarness(
   link: SessionUpstreamLink,
 ): UpstreamForkHarness | undefined {
-  const matches = listRegisteredAgentHarnesses().flatMap(({ harness }) => {
-    const sessionFork = harness.sessionFork;
-    return sessionFork?.upstreamKinds.includes(link.upstreamKind) ? [{ harness, sessionFork }] : [];
-  });
+  const matches: UpstreamForkHarness[] = [];
+  for (const { harness } of listRegisteredAgentHarnesses()) {
+    if (harness.sessionFork?.upstreamKinds.includes(link.upstreamKind)) {
+      matches.push({ harness, contract: "legacy", sessionFork: harness.sessionFork });
+    }
+    if (harness.sessionForkV2?.upstreamKinds.includes(link.upstreamKind)) {
+      matches.push({ harness, contract: "v2", sessionFork: harness.sessionForkV2 });
+    }
+  }
   return matches.length === 1 ? matches[0] : undefined;
 }
 
@@ -39,12 +57,12 @@ export function createUpstreamForkCurrentGuard(params: {
   sessionKey: string;
   source: ReturnType<typeof loadAccessorSessionEntryForGatewayTarget>;
   targetKey: string;
-}): () => void {
+}): UpstreamForkCurrentGuard {
   const expectedEntry = params.source.entry;
   if (!expectedEntry) {
     throw new Error(`Session ${params.sessionKey} changed during fork initialization`);
   }
-  return () => {
+  const readCurrent = () => {
     params.commitGuard();
     const currentConfig = params.context.getRuntimeConfig();
     const source = loadAccessorSessionEntryForGatewayTarget({
@@ -73,6 +91,7 @@ export function createUpstreamForkCurrentGuard(params: {
       !isDeepStrictEqual(currentLink.upstreamRef, params.link.upstreamRef) ||
       !currentForkHarness ||
       currentForkHarness.harness !== params.forkHarness.harness ||
+      currentForkHarness.contract !== params.forkHarness.contract ||
       currentForkHarness.sessionFork !== params.forkHarness.sessionFork
     ) {
       throw new Error(`Session ${params.sessionKey} changed during fork initialization`);
@@ -84,6 +103,13 @@ export function createUpstreamForkCurrentGuard(params: {
     });
     if (creationError) {
       throw new SessionMutationAuthorizationChangedError(creationError);
+    }
+    return { currentConfig, currentForkHarness, source, sourceEntry };
+  };
+  const assertCurrent = () => {
+    const { currentConfig, currentForkHarness, source, sourceEntry } = readCurrent();
+    if (currentForkHarness.contract !== "v2") {
+      return;
     }
     const executionEnvironment =
       currentForkHarness.sessionFork.executionEnvironment ??
@@ -117,5 +143,13 @@ export function createUpstreamForkCurrentGuard(params: {
     if (restriction) {
       throw new SessionMutationAuthorizationChangedError(restriction);
     }
+  };
+  return {
+    assertCurrent,
+    // Rollback keeps the accepted initializer's caller, source, and owner current,
+    // but cannot repeat policy that is meant to stop forward native execution.
+    assertRollbackCurrent: () => {
+      readCurrent();
+    },
   };
 }

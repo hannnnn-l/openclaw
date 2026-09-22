@@ -1,5 +1,5 @@
 import type {
-  AgentHarnessSessionForkParams,
+  AgentHarnessSessionForkParamsV2,
   AgentHarnessSessionForkResult,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
@@ -34,7 +34,7 @@ function readConnectionFingerprint(ref: unknown): string | undefined {
 }
 
 export async function forkCodexUpstreamSession(
-  params: AgentHarnessSessionForkParams,
+  params: AgentHarnessSessionForkParamsV2,
   options: {
     bindingStore: CodexAppServerBindingStore;
     controlFactory: CodexSessionCatalogControlFactory;

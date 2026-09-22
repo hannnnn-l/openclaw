@@ -428,7 +428,7 @@ async function mutateSessionAtMessage(
       }
       const creation = resolveOperatorSessionCreation(client);
       const sandbox = action === "fork" ? resolveCreatorSandbox(cfg, creation) : undefined;
-      const assertUpstreamForkCurrent =
+      const upstreamForkGuard =
         upstreamLink && upstreamForkHarness
           ? createUpstreamForkCurrentGuard({
               client,
@@ -441,10 +441,10 @@ async function mutateSessionAtMessage(
               source: current,
               targetKey,
             })
-          : () => commitGuard();
+          : { assertCurrent: commitGuard, assertRollbackCurrent: commitGuard };
       if (upstreamForkHarness) {
         try {
-          assertUpstreamForkCurrent();
+          upstreamForkGuard.assertCurrent();
         } catch (error) {
           if (error instanceof SessionMutationAuthorizationChangedError) {
             respond(false, undefined, error.error);
@@ -455,11 +455,10 @@ async function mutateSessionAtMessage(
       }
       const upstreamFork =
         upstreamLink && upstreamForkHarness
-          ? await withSessionInitializationSource(assertUpstreamForkCurrent, () =>
-              upstreamForkHarness.sessionFork.fork({
+          ? await withSessionInitializationSource(upstreamForkGuard, () => {
+              const forkParams = {
                 targetKey,
                 sandbox,
-                assertCurrent: assertUpstreamForkCurrent,
                 source: {
                   agentId: current.target.agentId,
                   sessionId: initialSessionId,
@@ -474,8 +473,14 @@ async function mutateSessionAtMessage(
                   threadId: upstreamLink.threadId,
                   ref: upstreamLink.upstreamRef,
                 },
-              }),
-            )
+              };
+              return upstreamForkHarness.contract === "v2"
+                ? upstreamForkHarness.sessionFork.fork({
+                    ...forkParams,
+                    assertCurrent: upstreamForkGuard.assertCurrent,
+                  })
+                : upstreamForkHarness.sessionFork.fork(forkParams);
+            })
           : undefined;
       if (upstreamFork?.status === "failed") {
         respond(

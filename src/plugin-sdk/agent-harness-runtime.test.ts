@@ -19,6 +19,8 @@ import {
   type AgentHarnessAttemptParamsV2,
   type AgentHarnessSideQuestionParams,
   type AgentHarnessSideQuestionParamsV2,
+  type AgentHarnessSessionForkParams,
+  type AgentHarnessSessionForkParamsV2,
   type AgentHarnessSupportContext,
   type AgentHarnessTerminalOutcomeClassification,
   type AgentHarnessV2,
@@ -203,6 +205,15 @@ describe("agent harness runtime SDK facade", () => {
         AgentHarnessSideQuestionParamsV2,
         "hostCapabilities"
       > extends AgentHarnessSideQuestionParamsV2
+        ? true
+        : false
+    >().toEqualTypeOf<false>();
+
+    expectTypeOf<
+      Omit<AgentHarnessSessionForkParamsV2, "assertCurrent">
+    >().toEqualTypeOf<AgentHarnessSessionForkParams>();
+    expectTypeOf<
+      Omit<AgentHarnessSessionForkParamsV2, "assertCurrent"> extends AgentHarnessSessionForkParamsV2
         ? true
         : false
     >().toEqualTypeOf<false>();
