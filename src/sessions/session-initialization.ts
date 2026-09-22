@@ -58,7 +58,7 @@ const { rollbackOwner, sources } = resolveGlobalSingleton(
 /** The message-cut owner supplies its exact source incarnation, never plugin-provided fields. */
 export async function withSessionInitializationSource<T>(
   source: Source,
-  run: () => Promise<T>,
+  run: (assertCurrent: () => void) => Promise<T>,
 ): Promise<T> {
   let active = true;
   try {
@@ -68,13 +68,11 @@ export async function withSessionInitializationSource<T>(
       }
       assert();
     };
-    return await sources.run(
-      {
-        assertCurrent: () => assertActive(source.assertCurrent),
-        assertRollbackCurrent: () => assertActive(source.assertRollbackCurrent),
-      },
-      run,
-    );
+    const current = Object.freeze({
+      assertCurrent: () => assertActive(source.assertCurrent),
+      assertRollbackCurrent: () => assertActive(source.assertRollbackCurrent),
+    });
+    return await sources.run(current, () => run(current.assertCurrent));
   } finally {
     active = false;
   }

@@ -455,7 +455,7 @@ async function mutateSessionAtMessage(
       }
       const upstreamFork =
         upstreamLink && upstreamForkHarness
-          ? await withSessionInitializationSource(upstreamForkGuard, () => {
+          ? await withSessionInitializationSource(upstreamForkGuard, (assertCurrent) => {
               const forkParams = {
                 targetKey,
                 sandbox,
@@ -477,7 +477,7 @@ async function mutateSessionAtMessage(
               return upstreamForkHarness.contract === "v2"
                 ? upstreamForkHarness.sessionFork.fork({
                     ...forkParams,
-                    assertCurrent: upstreamForkGuard.assertCurrent,
+                    assertCurrent,
                   })
                 : upstreamForkHarness.sessionFork.fork(forkParams);
             })

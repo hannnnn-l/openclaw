@@ -798,6 +798,37 @@ describe("session message-cut methods", () => {
     );
   });
 
+  it.each(["created", "failed"] as const)(
+    "expires native-write authority when the upstream fork settles %s",
+    async (outcome) => {
+      linkToUpstreamConversation();
+      installUpstreamForkHarness();
+      let retainedAssertCurrent: (() => void) | undefined;
+      mocks.upstreamFork.mockImplementation(
+        async ({ assertCurrent }: { assertCurrent: () => void }) => {
+          assertCurrent();
+          retainedAssertCurrent = assertCurrent;
+          return outcome === "created"
+            ? { status: "created", key: "agent:main:dashboard:forked" }
+            : {
+                status: "failed",
+                code: "upstream-unavailable",
+                message: "Codex is offline. Try again.",
+              };
+        },
+      );
+
+      await invoke("sessions.fork", "user-entry");
+
+      const nativeWrites = vi.fn();
+      expect(() => {
+        expectDefined(retainedAssertCurrent, "retained native-write authority")();
+        nativeWrites();
+      }).toThrow("Session initialization source is closed");
+      expect(nativeWrites).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["dual", "legacy", "v2"] as const)(
     "rejects the current creator's required sandbox before invoking a host-only %s upstream fork",
     async (contract) => {
