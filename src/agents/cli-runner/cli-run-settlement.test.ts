@@ -8,7 +8,11 @@ import {
 } from "../cli-runner.js";
 import { buildPreparedCliRunContext } from "../cli-runner.test-helpers.js";
 import { applyCliSessionBindingResult, getCliSessionBinding } from "../cli-session.js";
-import { buildBlockedCliRunResult, buildCliRunResult } from "./cli-run-settlement.js";
+import {
+  buildBlockedCliRunResult,
+  buildCliDeliveredFailure,
+  buildCliRunResult,
+} from "./cli-run-settlement.js";
 
 describe("isCliBindingFlushed", () => {
   const workspaceDir = "/tmp/openclaw-workspace";
@@ -178,6 +182,46 @@ describe("CLI native continuity projection", () => {
             ? undefined
             : "previous-native-session",
       );
+    },
+  );
+});
+
+describe("CLI result provider", () => {
+  it.each(["completed", "blocked", "delivered-failure"])(
+    "reports the selected model provider, not the CLI backend id, for a %s result",
+    (kind) => {
+      const prepared = buildPreparedCliRunContext({ provider: "claude-cli" });
+      const context = { ...prepared, params: { ...prepared.params, modelProvider: "anthropic" } };
+      const result =
+        kind === "blocked"
+          ? buildBlockedCliRunResult({
+              context,
+              message: "Blocked by the test policy",
+              preparedContextAgentMeta: {},
+              sessionBindingDisabled: false,
+            })
+          : kind === "delivered-failure"
+            ? buildCliDeliveredFailure({
+                context,
+                error: new Error("synthetic failure"),
+                evidence: { didSendViaMessagingTool: true },
+                preparedContextAgentMeta: {},
+                sessionBindingDisabled: false,
+              })
+            : buildCliRunResult({
+                context,
+                output: { text: "done" },
+                effectiveCliSessionId: "next-native-session",
+                bindingFlushOk: true,
+                usedHistoryPrompt: false,
+                userTurnHandled: true,
+                sessionBindingDisabled: false,
+                preparedContextAgentMeta: {},
+              });
+
+      // Session accounting persists agentMeta.provider as the session modelProvider.
+      expect(result.meta.agentMeta?.provider).toBe("anthropic");
+      expect(result.meta.executionTrace?.winnerProvider).toBe("claude-cli");
     },
   );
 });
