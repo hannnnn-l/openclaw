@@ -110,7 +110,13 @@ describe("shared GitHub publication requester authority", () => {
 
   it("persists the accepted request's narrower scope ceiling from an inherited maintainer source", async () => {
     const f = await fixture("local");
-    const { client, context, session } = f.maintainerSource;
+    setUserProfileRole(f.guestProfile, "maintainer");
+    invalidateOperatorRolePolicy(f.guestProfile);
+    const { client, context, session } = await createGitHubPublicationRequesterFixture({
+      profileId: f.guestProfile,
+      scopes: ["operator.admin"],
+      ...f.guestSource.session,
+    });
     const source = captureGatewayOperatorRunAuthority({ client, context })!;
     onTestFinished(source.release);
     const captured = await captureGitHubPublicationRequester(
@@ -134,7 +140,7 @@ describe("shared GitHub publication requester authority", () => {
     const stored = f.readRequester(accepted.requestId);
     expect(stored).toEqual({
       version: 1,
-      actor: { kind: "operator", profileId: f.maintainerProfile },
+      actor: { kind: "operator", profileId: f.guestProfile },
       scopes: guestScopes,
       grant: null,
     });

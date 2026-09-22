@@ -209,7 +209,9 @@ it("presents current recipient roles without SQLite while rejecting source overr
     const owner = ensureProfileForEmail("owner@presentation.test");
     const member = ensureProfileForEmail("member@presentation.test");
     const viewer = ensureProfileForEmail("viewer@presentation.test");
+    const guest = ensureProfileForEmail("guest@presentation.test");
     setUserProfileRole(viewer.id, "none");
+    setUserProfileRole(guest.id, "write");
     const clients = [owner, member, viewer].map((profile) => {
       const client = Object.assign(sharingPolicyClient({ user: profile.id }), {
         connId: profile.id,
@@ -223,6 +225,11 @@ it("presents current recipient roles without SQLite while rejecting source overr
       prepareGatewayRecipientProfile(client);
       return client;
     });
+    const guestClient = sharingPolicyClient({
+      user: guest.id,
+      scopes: ["operator.sessions.write"],
+    });
+    prepareGatewayRecipientProfile(guestClient);
     const cfg = rolePolicyConfig();
     const query = { agentId: "main", key: "agent:main:parent" };
     const scope = { agentId: "main", sessionKey: query.key };
@@ -242,6 +249,7 @@ it("presents current recipient roles without SQLite while rejecting source overr
       },
     );
     addSessionMember(scope, { identityId: member.id, addedBy: owner.id });
+    addSessionMember(scope, { identityId: guest.id, addedBy: owner.id });
     const projection = await createSessionRowProjection({ cfg });
     const connection = createGatewayConnectionState({ bootId: "presentation", cfg });
     const detach = connection.attachSessionRowProjection(projection);
@@ -252,6 +260,11 @@ it("presents current recipient roles without SQLite while rejecting source overr
       const captured = projection.describe(query)!;
       const prepares = vi.spyOn(DatabaseSync.prototype, "prepare");
       const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+      const guestPresentation = prepareProjectedSessionPresentation(projection, guestClient);
+      expect(guestPresentation.present(captured)).toMatchObject({ sharingRole: "viewer" });
+      expect(
+        guestPresentation.sharing.authorizeTarget(guestPresentation.target(query)!),
+      ).toMatchObject({ code: "INVALID_REQUEST" });
       expect(
         prepareProjectedSessionPresentation(projection).present(captured)?.sharingRole,
       ).toBeUndefined();
