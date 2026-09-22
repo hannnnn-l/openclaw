@@ -36,11 +36,11 @@ export function resolveUpstreamForkHarness(
 ): UpstreamForkHarness | undefined {
   const matches: UpstreamForkHarness[] = [];
   for (const { harness } of listRegisteredAgentHarnesses()) {
-    if (harness.sessionFork?.upstreamKinds.includes(link.upstreamKind)) {
-      matches.push({ harness, contract: "legacy", sessionFork: harness.sessionFork });
-    }
+    // Dual registration lets one plugin serve old and current hosts; V2 owns this host.
     if (harness.sessionForkV2?.upstreamKinds.includes(link.upstreamKind)) {
       matches.push({ harness, contract: "v2", sessionFork: harness.sessionForkV2 });
+    } else if (harness.sessionFork?.upstreamKinds.includes(link.upstreamKind)) {
+      matches.push({ harness, contract: "legacy", sessionFork: harness.sessionFork });
     }
   }
   return matches.length === 1 ? matches[0] : undefined;

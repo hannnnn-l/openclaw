@@ -315,7 +315,7 @@ function linkToUpstreamConversation(): void {
 
 function installUpstreamForkHarness(
   executionEnvironment?: "host-only",
-  contract: "legacy" | "v2" = "v2",
+  contract: "dual" | "legacy" | "v2" = "v2",
 ): void {
   const sessionFork = {
     upstreamKinds: ["codex-app-server" as const],
@@ -331,17 +331,17 @@ function installUpstreamForkHarness(
       runAttempt: async () => {
         throw new Error("not used");
       },
-      ...(contract === "legacy"
+      ...(contract !== "v2"
+        ? { ...(executionEnvironment ? { executionEnvironment } : {}), sessionFork }
+        : {}),
+      ...(contract !== "legacy"
         ? {
-            ...(executionEnvironment ? { executionEnvironment } : {}),
-            sessionFork,
-          }
-        : {
             sessionForkV2: {
               ...(executionEnvironment ? { executionEnvironment } : {}),
               ...sessionFork,
             },
-          }),
+          }
+        : {}),
       supports: () => ({ supported: false }),
     },
   });
@@ -770,7 +770,7 @@ describe("session message-cut methods", () => {
 
   it("delegates complete upstream fork materialization to the harness", async () => {
     linkToUpstreamConversation();
-    installUpstreamForkHarness();
+    installUpstreamForkHarness(undefined, "dual");
     mocks.upstreamFork.mockResolvedValue({
       status: "created",
       key: "agent:main:dashboard:forked",
@@ -785,6 +785,7 @@ describe("session message-cut methods", () => {
     );
     expect(mocks.upstreamFork).toHaveBeenCalledWith(
       expect.objectContaining({
+        assertCurrent: expect.any(Function),
         source: expect.objectContaining({ entryId: "user-entry", sessionKey }),
         targetKey: expect.stringMatching(/^agent:main:dashboard:/),
         upstream: expect.objectContaining({
@@ -797,7 +798,7 @@ describe("session message-cut methods", () => {
     );
   });
 
-  it.each(["legacy", "v2"] as const)(
+  it.each(["dual", "legacy", "v2"] as const)(
     "rejects the current creator's required sandbox before invoking a host-only %s upstream fork",
     async (contract) => {
       const profile = ensureProfileForEmail(`sandbox-required-${contract}-fork@example.com`);
