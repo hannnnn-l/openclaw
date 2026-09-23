@@ -217,6 +217,7 @@ function createPluginToolPermissionHandler(params: {
     }
 
     params.onPendingApproval(1);
+    const execToolConfig = resolveExecToolConfig({ cfg: run.config, agentId: run.agentId });
     let outcome: Awaited<ReturnType<typeof requestCliNativeToolApproval>>;
     try {
       outcome = await requestCliNativeToolApproval({
@@ -231,14 +232,14 @@ function createPluginToolPermissionHandler(params: {
         bindingEnv: params.env,
         env: {
           ...params.env,
-          PATH: mergePathPrepend(
-            params.env.PATH,
-            resolveExecToolConfig({ cfg: run.config, agentId: run.agentId }).pathPrepend ?? [],
-          ),
+          PATH: mergePathPrepend(params.env.PATH, execToolConfig.pathPrepend ?? []),
         },
         assertActive,
         abortSignal: signal,
         ask: permission.ask,
+        autoReview: permission.mode === "auto",
+        cfg: run.config,
+        reviewer: execToolConfig.reviewer,
       });
     } finally {
       params.onPendingApproval(-1);

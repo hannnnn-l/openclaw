@@ -35,7 +35,7 @@ export type ExecAutoReviewDecision =
     };
 
 /** Execution host whose command policy context is being reviewed. */
-export type ExecAutoReviewHost = "gateway" | "node" | "codex-app-server";
+export type ExecAutoReviewHost = "gateway" | "node" | "codex-app-server" | "claude-cli";
 
 export type ExecAutoReviewTranscriptEntry = {
   kind: "user" | "assistant" | "tool_call" | "tool_result";

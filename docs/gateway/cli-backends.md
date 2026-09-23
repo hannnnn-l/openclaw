@@ -221,6 +221,24 @@ still denies, and `ask: "off"` keeps the behavior described above. **Allow
 always** remains unavailable for Bash, and truncated Bash approval descriptions
 still fail closed.
 
+### Auto-reviewed native Bash
+
+With [`tools.exec.mode: "auto"`](/tools/exec#modes), an
+allowlist miss that the approval binding guard can still bind goes to the
+native auto-reviewer before it costs a human approval. An `allow` verdict for a
+low- or medium-risk command permits that single call, a `deny` verdict returns
+the reason to Claude Code instead of escalating, and an `ask` verdict, a
+high-risk `allow`, a review failure, or a timeout all fall through to the
+existing human prompt with the reviewer's rationale attached.
+
+The reviewer never widens what the binding guard accepts: pipelines, command
+substitutions, subshells, write redirections, and unparsable syntax stay denied
+before review, an allowlist match still wins without a review, and `ask:
+"always"` still prompts. An approved command's bound script bytes are
+re-checked after the review returns, because the model call is an out-of-band
+wait like a human approval. Reviewer configuration is shared with the exec
+tool under `tools.exec.reviewer`.
+
 This is argument-level policy applied to the command Claude Code will run,
 not sandboxed execution by OpenClaw. Claude Code owns cwd, PATH, environment,
 and sandboxing. Use a [paired node](/nodes) or the embedded runtime with

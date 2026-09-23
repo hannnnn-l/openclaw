@@ -12,6 +12,7 @@ import {
   PLUGIN_APPROVAL_DETAIL_MAX_LENGTH,
 } from "../../infra/plugin-approvals.js";
 import { APPROVAL_SCRIPT_OPERAND_DRIFT_DENIED_MESSAGE } from "../../infra/system-run-approval-binding.js";
+import { reviewExecRequestWithConfiguredModel } from "../../plugin-sdk/agent-harness-exec-review-runtime.js";
 import { callGatewayTool } from "../tools/gateway.js";
 import {
   requestCliNativeToolApproval,
@@ -22,11 +23,22 @@ vi.mock("../tools/gateway.js", () => ({
   callGatewayTool: vi.fn(),
 }));
 
+// Keep the real review-input builder so its reviewability filters still run;
+// only the model-backed reviewer itself is stubbed.
+vi.mock("../../plugin-sdk/agent-harness-exec-review-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../plugin-sdk/agent-harness-exec-review-runtime.js")
+  >()),
+  reviewExecRequestWithConfiguredModel: vi.fn(),
+}));
+
 const mockCallGatewayTool = vi.mocked(callGatewayTool);
+const mockReviewExecRequest = vi.mocked(reviewExecRequestWithConfiguredModel);
 
 afterEach(() => {
   vi.unstubAllEnvs();
   mockCallGatewayTool.mockReset();
+  mockReviewExecRequest.mockReset();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -507,5 +519,230 @@ describe("requestCliNativeToolApproval", () => {
       description: "{}",
       detail: "{}",
     });
+  });
+});
+
+describe("requestCliNativeToolApproval exec auto-review", () => {
+  it("allows an eligible Bash allowlist miss without a human approval", async () => {
+    mockReviewExecRequest.mockResolvedValueOnce({
+      decision: "allow-once",
+      risk: "low",
+      rationale: "read-only listing",
+    });
+
+    await expect(
+      requestCliNativeToolApproval({
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+        pluginId: "claude-cli",
+        agentId: "main",
+        ask: "on-miss",
+        autoReview: true,
+      }),
+    ).resolves.toEqual({ kind: "allow", grantAlways: false });
+
+    expect(mockCallGatewayTool).not.toHaveBeenCalled();
+    expect(mockReviewExecRequest.mock.calls[0]?.[0]?.input).toMatchObject({
+      command: "ls",
+      host: "claude-cli",
+      analysis: { allowlistMatched: false },
+    });
+  });
+
+  it("returns a reviewer denial to the agent instead of escalating to a human", async () => {
+    mockReviewExecRequest.mockResolvedValueOnce({
+      decision: "deny",
+      risk: "high",
+      rationale: "destroys unrelated data",
+    });
+
+    const outcome = await requestCliNativeToolApproval({
+      toolName: "Bash",
+      toolInput: { command: "ls" },
+      pluginId: "claude-cli",
+      agentId: "main",
+      ask: "on-miss",
+      autoReview: true,
+    });
+
+    expect(outcome).toMatchObject({ kind: "deny", reason: "auto-review" });
+    expect((outcome as { message: string }).message).toContain("destroys unrelated data");
+    expect((outcome as { message: string }).message).toContain("materially safer alternative");
+    expect(mockCallGatewayTool).not.toHaveBeenCalled();
+  });
+
+  it.each(["ask", "allow-once-high-risk"] as const)(
+    "falls back to human approval for a %s verdict",
+    async (variant) => {
+      mockReviewExecRequest.mockResolvedValueOnce(
+        variant === "ask"
+          ? { decision: "ask", risk: "unknown", rationale: "needs a person" }
+          : // The reviewer already maps a non low/medium allow to ask; assert the
+            // fallback path rather than trusting the caller to re-check risk.
+            { decision: "ask", risk: "high", rationale: "needs a person" },
+      );
+      mockCallGatewayTool.mockResolvedValueOnce({ id: "deferred", decision: "allow-once" });
+
+      await expect(
+        requestCliNativeToolApproval({
+          toolName: "Bash",
+          toolInput: { command: "ls" },
+          pluginId: "claude-cli",
+          agentId: "main",
+          ask: "on-miss",
+          autoReview: true,
+        }),
+      ).resolves.toEqual({ kind: "allow", grantAlways: false });
+
+      expect(mockCallGatewayTool.mock.calls[0]?.[2]).toMatchObject({
+        description: expect.stringContaining("Exec auto-review deferred to human approval"),
+        allowedDecisions: ["allow-once", "deny"],
+      });
+    },
+  );
+
+  it("falls back to human approval when the reviewer throws", async () => {
+    mockReviewExecRequest.mockRejectedValueOnce(new Error("reviewer construction failed"));
+    mockCallGatewayTool.mockResolvedValueOnce({ id: "reviewer-error", decision: "deny" });
+
+    await expect(
+      requestCliNativeToolApproval({
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+        pluginId: "claude-cli",
+        agentId: "main",
+        ask: "on-miss",
+        autoReview: true,
+      }),
+    ).resolves.toEqual({ kind: "deny", reason: "user" });
+    expect(mockCallGatewayTool).toHaveBeenCalledOnce();
+  });
+
+  it("does not review when exec mode is ask", async () => {
+    mockCallGatewayTool.mockResolvedValueOnce({ id: "no-review", decision: "allow-once" });
+
+    await expect(
+      requestCliNativeToolApproval({
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+        pluginId: "claude-cli",
+        agentId: "main",
+        ask: "on-miss",
+      }),
+    ).resolves.toEqual({ kind: "allow", grantAlways: false });
+
+    expect(mockReviewExecRequest).not.toHaveBeenCalled();
+    expect(mockCallGatewayTool).toHaveBeenCalledOnce();
+  });
+
+  it("still prompts a human when ask is always", async () => {
+    mockCallGatewayTool.mockResolvedValueOnce({ id: "always-review", decision: "allow-once" });
+
+    await expect(
+      requestCliNativeToolApproval({
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+        pluginId: "claude-cli",
+        agentId: "main",
+        ask: "always",
+        autoReview: true,
+      }),
+    ).resolves.toEqual({ kind: "allow", grantAlways: false });
+
+    expect(mockReviewExecRequest).not.toHaveBeenCalled();
+    expect(mockCallGatewayTool).toHaveBeenCalledOnce();
+  });
+
+  it("prefers an allowlist match over the reviewer", async () => {
+    const dir = makeExecApprovalsTempDir();
+    vi.stubEnv("OPENCLAW_STATE_DIR", dir);
+    const binary = makeExecutable(dir, "gog");
+    saveExecApprovals({ version: 1, agents: { main: { allowlist: [{ pattern: binary }] } } });
+
+    await expect(
+      requestCliNativeToolApproval({
+        toolName: "Bash",
+        toolInput: { command: "gog calendar list" },
+        pluginId: "claude-cli",
+        agentId: "main",
+        cwd: dir,
+        env: { PATH: dir },
+        ask: "on-miss",
+        autoReview: true,
+      }),
+    ).resolves.toMatchObject({ kind: "allow", grantAlways: false });
+
+    expect(mockReviewExecRequest).not.toHaveBeenCalled();
+    expect(mockCallGatewayTool).not.toHaveBeenCalled();
+  });
+
+  it.each(["ls | wc -l", "ls $(date)", "(ls)", "ls > out.txt"])(
+    "keeps the binding guard ahead of the reviewer for %s",
+    async (command) => {
+      await expect(
+        requestCliNativeToolApproval({
+          toolName: "Bash",
+          toolInput: { command },
+          pluginId: "claude-cli",
+          agentId: "main",
+          ask: "on-miss",
+          autoReview: true,
+        }),
+      ).resolves.toMatchObject({ kind: "deny", reason: "operand-binding" });
+
+      expect(mockReviewExecRequest).not.toHaveBeenCalled();
+      expect(mockCallGatewayTool).not.toHaveBeenCalled();
+    },
+  );
+
+  it("denies an approved command whose bound script changed during the review", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-cli-review-drift-"));
+    const script = path.join(cwd, "script.sh");
+    try {
+      fs.writeFileSync(script, "#!/bin/sh\necho approved\n");
+      fs.chmodSync(script, 0o755);
+      mockReviewExecRequest.mockImplementationOnce(async () => {
+        fs.writeFileSync(script, "#!/bin/sh\necho changed\n");
+        return { decision: "allow-once", risk: "low", rationale: "local script" };
+      });
+
+      await expect(
+        requestCliNativeToolApproval({
+          toolName: "Bash",
+          toolInput: { command: "./script.sh" },
+          pluginId: "claude-cli",
+          agentId: "main",
+          cwd,
+          ask: "on-miss",
+          autoReview: true,
+        }),
+      ).resolves.toEqual({
+        kind: "deny",
+        reason: "operand-binding",
+        message: APPROVAL_SCRIPT_OPERAND_DRIFT_DENIED_MESSAGE,
+      });
+      expect(mockCallGatewayTool).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the run aborts during the review", async () => {
+    const abortController = new AbortController();
+    mockReviewExecRequest.mockImplementationOnce(() => new Promise(() => {}));
+    const approval = requestCliNativeToolApproval({
+      toolName: "Bash",
+      toolInput: { command: "ls" },
+      pluginId: "claude-cli",
+      agentId: "main",
+      ask: "on-miss",
+      autoReview: true,
+      abortSignal: abortController.signal,
+    });
+
+    abortController.abort(new Error("run stopped"));
+
+    await expect(approval).resolves.toEqual({ kind: "deny", reason: "unavailable" });
+    expect(mockCallGatewayTool).not.toHaveBeenCalled();
   });
 });
