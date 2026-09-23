@@ -37,6 +37,12 @@ vi.mock("../../plugin-sdk/agent-harness-exec-review-runtime.js", async (importOr
 const mockCallGatewayTool = vi.mocked(callGatewayTool);
 const mockReviewExecRequest = vi.mocked(reviewExecRequestWithConfiguredModel);
 
+/** The gateway approval payload is loosely typed; read its description safely. */
+function approvalRequestDescription(): string | undefined {
+  const payload = mockCallGatewayTool.mock.calls[0]?.[2] as { description?: string } | undefined;
+  return payload?.description;
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
   mockCallGatewayTool.mockReset();
@@ -600,7 +606,7 @@ describe("requestCliNativeToolApproval exec auto-review", () => {
     expect(mockReviewExecRequest).toHaveBeenCalledTimes(1);
     expect(mockCallGatewayTool).toHaveBeenCalledTimes(1);
     expect(outcome).toEqual({ kind: "deny", reason: "user" });
-    expect(String(mockCallGatewayTool.mock.calls[0]?.[2]?.description)).toContain(
+    expect(String(approvalRequestDescription())).toContain(
       EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING,
     );
   });
@@ -628,7 +634,7 @@ describe("requestCliNativeToolApproval exec auto-review", () => {
 
     expect(outcome).toEqual({ kind: "allow", grantAlways: false });
     expect(mockCallGatewayTool).toHaveBeenCalledTimes(1);
-    const description = String(mockCallGatewayTool.mock.calls[0]?.[2]?.description);
+    const description = String(approvalRequestDescription());
     // The command stays complete; only the annotation is budgeted away.
     expect(description).toContain(command);
     expect(description.length).toBeLessThanOrEqual(PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH);
