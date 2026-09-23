@@ -7,6 +7,7 @@ import {
   makeExecApprovalsTempDir,
 } from "../../infra/exec-approvals-test-helpers.js";
 import { loadExecApprovals, saveExecApprovals } from "../../infra/exec-approvals.js";
+import { EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING } from "../../infra/exec-auto-review.js";
 import {
   DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS,
   PLUGIN_APPROVAL_DETAIL_MAX_LENGTH,
@@ -530,23 +531,77 @@ describe("requestCliNativeToolApproval exec auto-review", () => {
       rationale: "read-only listing",
     });
 
-    await expect(
-      requestCliNativeToolApproval({
-        toolName: "Bash",
-        toolInput: { command: "ls" },
-        pluginId: "claude-cli",
-        agentId: "main",
-        ask: "on-miss",
-        autoReview: true,
-      }),
-    ).resolves.toEqual({ kind: "allow", grantAlways: false });
+    const outcome = await requestCliNativeToolApproval({
+      toolName: "Bash",
+      toolInput: { command: "ls" },
+      pluginId: "claude-cli",
+      agentId: "main",
+      ask: "on-miss",
+      autoReview: true,
+    });
 
+    expect(outcome).toMatchObject({ kind: "allow", grantAlways: false });
     expect(mockCallGatewayTool).not.toHaveBeenCalled();
     expect(mockReviewExecRequest.mock.calls[0]?.[0]?.input).toMatchObject({
       command: "ls",
       host: "claude-cli",
       analysis: { allowlistMatched: false },
     });
+  });
+
+  it("pins the reviewed command to its bound executable real path", async () => {
+    mockReviewExecRequest.mockResolvedValueOnce({
+      decision: "allow-once",
+      risk: "low",
+      rationale: "read-only listing",
+    });
+
+    const outcome = await requestCliNativeToolApproval({
+      toolName: "Bash",
+      toolInput: { command: "ls", timeout: 1000 },
+      pluginId: "claude-cli",
+      agentId: "main",
+      ask: "on-miss",
+      autoReview: true,
+    });
+
+    // The reviewer judged a PATH-resolved name; Claude Code owns the spawn, so
+    // the returned command must name the executable the reviewer actually saw.
+    expect(outcome).toMatchObject({ kind: "allow" });
+    const command = (outcome as { updatedInput?: { command?: string } }).updatedInput?.command;
+    expect(command).toBeDefined();
+    expect(command).toMatch(/^'?\/.*ls'?$/u);
+    // Unrelated tool input is preserved.
+    expect((outcome as { updatedInput?: Record<string, unknown> }).updatedInput).toMatchObject({
+      timeout: 1000,
+    });
+  });
+
+  it("escalates a reviewer allow to a human when the dispatch identity cannot be bound", async () => {
+    // A shell builtin has no external executable to pin, so an allow verdict
+    // must not become a silent auto-allow.
+    mockCallGatewayTool.mockResolvedValueOnce({ id: "approval-pin", decision: "deny" });
+    mockReviewExecRequest.mockResolvedValueOnce({
+      decision: "allow-once",
+      risk: "low",
+      rationale: "prints the working directory",
+    });
+
+    const outcome = await requestCliNativeToolApproval({
+      toolName: "Bash",
+      toolInput: { command: "pwd" },
+      pluginId: "claude-cli",
+      agentId: "main",
+      ask: "on-miss",
+      autoReview: true,
+    });
+
+    expect(mockReviewExecRequest).toHaveBeenCalledTimes(1);
+    expect(mockCallGatewayTool).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ kind: "deny", reason: "user" });
+    expect(String(mockCallGatewayTool.mock.calls[0]?.[2]?.description)).toContain(
+      EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING,
+    );
   });
 
   it("returns a reviewer denial to the agent instead of escalating to a human", async () => {

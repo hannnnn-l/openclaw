@@ -6,7 +6,10 @@ import {
   exceedsApprovalTextLimit,
   sanitizeExecApprovalWarningTextWithStatus,
 } from "../../infra/exec-approval-text-sanitize.js";
-import { evaluateShellAllowlistWithAuthorization } from "../../infra/exec-approvals-allowlist.js";
+import {
+  evaluateShellAllowlistWithAuthorization,
+  type ExecSegmentSatisfiedBy,
+} from "../../infra/exec-approvals-allowlist.js";
 import {
   loadExecApprovals,
   recordAllowlistMatchesUse,
@@ -14,9 +17,15 @@ import {
   type ExecAsk,
   type ExecSecurity,
 } from "../../infra/exec-approvals.js";
-import { buildAuthorizedShellCommandFromPlan } from "../../infra/exec-authorization-render.js";
+import type { ExecAuthorizationPlan } from "../../infra/exec-authorization-plan.js";
+import {
+  buildAuthorizedShellCommandFromPlan,
+  buildReviewedShellCommandFromPlan,
+} from "../../infra/exec-authorization-render.js";
+import { resolveUnpinnedAutoApprovalEligibility } from "../../infra/exec-auto-approval-eligibility.js";
 import {
   EXEC_AUTO_REVIEW_DENIAL_GUIDANCE,
+  EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING,
   formatExecAutoReviewAssessment,
 } from "../../infra/exec-auto-review.js";
 import {
@@ -189,6 +198,10 @@ export async function requestCliNativeToolApproval(params: {
         ? params.toolInput.command
         : undefined;
     let autoAllow: (() => CliNativeToolApprovalOutcome) | undefined;
+    // Retained past the allowlist block so an auto-review allow can pin the same
+    // resolved dispatch identities the allowlist path pins.
+    let authorizationPlan: ExecAuthorizationPlan | undefined;
+    let segmentSatisfiedBy: readonly ExecSegmentSatisfiedBy[] | undefined;
     if (
       params.ask === "on-miss" &&
       params.pluginId === "claude-cli" &&
@@ -204,6 +217,8 @@ export async function requestCliNativeToolApproval(params: {
         cwd: params.cwd,
         env: params.env,
       });
+      authorizationPlan = analysis.authorizationPlan;
+      segmentSatisfiedBy = analysis.segmentSatisfiedBy;
       const plan = analysis.authorizationPlan;
       const candidates = plan?.groups.flatMap((group) => group.candidates) ?? [];
       const miss = candidates.findIndex(
@@ -313,27 +328,52 @@ export async function requestCliNativeToolApproval(params: {
         };
       }
       if (decision?.decision === "allow-once") {
-        // The model call is an out-of-band wait like a human approval, so the
-        // bound script bytes must still match before the CLI owns the spawn.
-        if (mutableFileBinding) {
-          const binding = await revalidateSystemRunMutableFileBinding({
-            binding: mutableFileBinding,
-            cwd: params.cwd ?? params.fallbackCwd,
-          });
-          if (!binding.ok) {
-            return { kind: "deny", reason: "operand-binding", message: binding.message };
+        // Claude Code owns the spawn, so an unpinned allow would let PATH
+        // resolve a different executable than the reviewer judged. Pin every
+        // dispatch to its bound real path, exactly as the gateway reviewer
+        // does, and fall back to a human when that identity is unavailable.
+        const dispatchEligibility = resolveUnpinnedAutoApprovalEligibility({
+          authorizationPlan,
+          binding: mutableFileBinding,
+        });
+        const reviewedCommand =
+          dispatchEligibility.eligible && authorizationPlan && mutableFileBinding
+            ? buildReviewedShellCommandFromPlan({
+                plan: authorizationPlan,
+                binding: mutableFileBinding,
+                segmentSatisfiedBy,
+              })
+            : undefined;
+        if (!reviewedCommand?.ok) {
+          description.text += `\n${EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING}`;
+        } else {
+          // The model call is an out-of-band wait like a human approval, so the
+          // bound executables and script bytes must still match before the CLI
+          // owns the spawn.
+          if (mutableFileBinding) {
+            const binding = await revalidateSystemRunMutableFileBinding({
+              binding: mutableFileBinding,
+              cwd: params.cwd ?? params.fallbackCwd,
+            });
+            if (!binding.ok) {
+              return { kind: "deny", reason: "operand-binding", message: binding.message };
+            }
           }
+          try {
+            params.abortSignal?.throwIfAborted();
+            params.assertActive?.();
+          } catch {
+            return { kind: "deny", reason: "unavailable" };
+          }
+          logVerbose(
+            `Claude CLI native Bash auto-review allowed once (${formatExecAutoReviewAssessment(decision)})`,
+          );
+          return {
+            kind: "allow",
+            grantAlways: false,
+            updatedInput: { ...params.toolInput, command: reviewedCommand.command },
+          };
         }
-        try {
-          params.abortSignal?.throwIfAborted();
-          params.assertActive?.();
-        } catch {
-          return { kind: "deny", reason: "unavailable" };
-        }
-        logVerbose(
-          `Claude CLI native Bash auto-review allowed once (${formatExecAutoReviewAssessment(decision)})`,
-        );
-        return { kind: "allow", grantAlways: false };
       }
       if (decision) {
         description.text += `\nExec auto-review deferred to human approval (${formatExecAutoReviewAssessment(decision)}): ${truncateUtf16Safe(decision.rationale, 100)}`;

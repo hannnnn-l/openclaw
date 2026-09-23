@@ -234,10 +234,16 @@ existing human prompt with the reviewer's rationale attached.
 The reviewer never widens what the binding guard accepts: pipelines, command
 substitutions, subshells, write redirections, and unparsable syntax stay denied
 before review, an allowlist match still wins without a review, and `ask:
-"always"` still prompts. An approved command's bound script bytes are
-re-checked after the review returns, because the model call is an out-of-band
-wait like a human approval. Reviewer configuration is shared with the exec
-tool under `tools.exec.reviewer`.
+"always"` still prompts. Reviewer configuration is shared with the exec tool
+under `tools.exec.reviewer`.
+
+Because Claude Code owns the spawn, an auto-review allow rewrites the approved
+command so every dispatch names its bound executable real path, the same
+pinning the allowlist path and the gateway reviewer apply. A command whose
+dispatch identity cannot be bound — a shell builtin, for example — is never
+auto-allowed and falls back to human approval. The bound executables and script
+bytes are re-checked after the review returns, because the model call is an
+out-of-band wait like a human approval.
 
 This is argument-level policy applied to the command Claude Code will run,
 not sandboxed execution by OpenClaw. Claude Code owns cwd, PATH, environment,
