@@ -10,6 +10,7 @@ import { loadExecApprovals, saveExecApprovals } from "../../infra/exec-approvals
 import { EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING } from "../../infra/exec-auto-review.js";
 import {
   DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS,
+  PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH,
   PLUGIN_APPROVAL_DETAIL_MAX_LENGTH,
 } from "../../infra/plugin-approvals.js";
 import { APPROVAL_SCRIPT_OPERAND_DRIFT_DENIED_MESSAGE } from "../../infra/system-run-approval-binding.js";
@@ -602,6 +603,35 @@ describe("requestCliNativeToolApproval exec auto-review", () => {
     expect(String(mockCallGatewayTool.mock.calls[0]?.[2]?.description)).toContain(
       EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING,
     );
+  });
+
+  it("still reaches a human when annotations would overflow a near-limit description", async () => {
+    // A command whose description already sits close to the 512-character
+    // approval limit. Appending the allowlist-miss note plus the reviewer
+    // rationale must not turn an `ask` verdict into a policy-oversized denial.
+    const command = `ls ${"a".repeat(360)}`;
+    mockCallGatewayTool.mockResolvedValueOnce({ id: "near-limit", decision: "allow-once" });
+    mockReviewExecRequest.mockResolvedValueOnce({
+      decision: "ask",
+      risk: "medium",
+      rationale: "N".repeat(400),
+    });
+
+    const outcome = await requestCliNativeToolApproval({
+      toolName: "Bash",
+      toolInput: { command },
+      pluginId: "claude-cli",
+      agentId: "main",
+      ask: "on-miss",
+      autoReview: true,
+    });
+
+    expect(outcome).toEqual({ kind: "allow", grantAlways: false });
+    expect(mockCallGatewayTool).toHaveBeenCalledTimes(1);
+    const description = String(mockCallGatewayTool.mock.calls[0]?.[2]?.description);
+    // The command stays complete; only the annotation is budgeted away.
+    expect(description).toContain(command);
+    expect(description.length).toBeLessThanOrEqual(PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH);
   });
 
   it("returns a reviewer denial to the agent instead of escalating to a human", async () => {

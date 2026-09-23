@@ -101,6 +101,50 @@ function formatCliNativeToolDescription(
   };
 }
 
+/** True when the sanitized text still fits the human approval description limit. */
+function fitsApprovalDescription(text: string): boolean {
+  return !exceedsApprovalTextLimit(
+    sanitizeExecApprovalWarningTextWithStatus(text).text,
+    PLUGIN_APPROVAL_DESCRIPTION_MAX_LENGTH,
+  );
+}
+
+/**
+ * Appends a diagnostic annotation only while the sanitized description still
+ * fits the human approval limit, shrinking the detail before dropping the
+ * annotation outright. Annotations explain a decision; they must never push an
+ * otherwise reviewable command into the oversized guard, because that turns a
+ * reviewer `ask` or a review failure into a denial of a command that would
+ * previously have reached a human.
+ */
+function appendBudgetedApprovalAnnotation(params: {
+  text: string;
+  label: string;
+  detail?: string;
+}): string {
+  const labelled = `${params.text}\n${params.label}`;
+  if (!fitsApprovalDescription(labelled)) {
+    return params.text;
+  }
+  const detail = params.detail ?? "";
+  if (detail.length === 0) {
+    return labelled;
+  }
+  // Largest detail prefix that still fits; sanitization can expand the text, so
+  // the budget has to be measured rather than computed from raw lengths.
+  let fitting = 0;
+  let upper = detail.length;
+  while (fitting < upper) {
+    const mid = Math.ceil((fitting + upper) / 2);
+    if (fitsApprovalDescription(`${labelled}: ${truncateUtf16Safe(detail, mid)}`)) {
+      fitting = mid;
+    } else {
+      upper = mid - 1;
+    }
+  }
+  return fitting > 0 ? `${labelled}: ${truncateUtf16Safe(detail, fitting)}` : labelled;
+}
+
 /**
  * Review one allowlist-missing native Bash command with the configured model.
  * Returns `undefined` when this command cannot be reviewed, so the caller keeps
@@ -271,7 +315,11 @@ export async function requestCliNativeToolApproval(params: {
         };
       } else {
         const reason = sanitizeExecApprovalWarningTextWithStatus(rendered.reason).text;
-        description.text += `\nExec allowlist miss: ${truncateUtf16Safe(reason, 100)}`;
+        description.text = appendBudgetedApprovalAnnotation({
+          text: description.text,
+          label: "Exec allowlist miss",
+          detail: truncateUtf16Safe(reason, 100),
+        });
       }
     }
     let mutableFileBinding: SystemRunMutableFileBinding | undefined;
@@ -345,7 +393,10 @@ export async function requestCliNativeToolApproval(params: {
               })
             : undefined;
         if (!reviewedCommand?.ok) {
-          description.text += `\n${EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING}`;
+          description.text = appendBudgetedApprovalAnnotation({
+            text: description.text,
+            label: EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING,
+          });
         } else {
           // The model call is an out-of-band wait like a human approval, so the
           // bound executables and script bytes must still match before the CLI
@@ -376,7 +427,11 @@ export async function requestCliNativeToolApproval(params: {
         }
       }
       if (decision) {
-        description.text += `\nExec auto-review deferred to human approval (${formatExecAutoReviewAssessment(decision)}): ${truncateUtf16Safe(decision.rationale, 100)}`;
+        description.text = appendBudgetedApprovalAnnotation({
+          text: description.text,
+          label: `Exec auto-review deferred to human approval (${formatExecAutoReviewAssessment(decision)})`,
+          detail: truncateUtf16Safe(decision.rationale, 100),
+        });
       }
     }
     if (
