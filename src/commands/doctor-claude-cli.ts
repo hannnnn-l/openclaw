@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   normalizeOptionalLowercaseString,
@@ -31,6 +32,24 @@ type ClaudeCliDiscoveryApi = {
     options: { pathStrategy: "direct" },
   ) => { executable: string } | undefined;
 };
+
+type ClaudeCliMemoryApi = {
+  excludesClaudeNativeMemory: (cfg: OpenClawConfig) => boolean;
+};
+
+function countMarkdownFiles(dirPath: string): number {
+  try {
+    return fs
+      .readdirSync(dirPath, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md")).length;
+  } catch {
+    return 0;
+  }
+}
+
+function formatCliPathArg(value: string): string {
+  return /\s/u.test(value) ? JSON.stringify(value) : value;
+}
 
 function isClaudeCliAuthenticated(commandPath: string, env: NodeJS.ProcessEnv): boolean {
   const result = spawnSync(commandPath, ["auth", "status", "--json"], {
@@ -185,6 +204,12 @@ export function noteClaudeCliHealth(
     delete authEnv[envName];
   }
   const authenticated = commandPath ? isClaudeCliAuthenticated(commandPath, authEnv) : false;
+  // The Anthropic plugin owns whether Claude Code's own memory is excluded from agent turns.
+  const excludesNativeMemory =
+    loadBundledPluginPublicArtifactModuleFromCandidatesSync<ClaudeCliMemoryApi>({
+      dirName: "anthropic",
+      artifactCandidates: ["cli-memory-api.js"],
+    })?.excludesClaudeNativeMemory(cfg) === true;
   const defaultAgentId = tryResolveDefaultAgentId(cfg);
   const showAgentLabels =
     workspaceTargets.length > 1 ||
@@ -242,6 +267,23 @@ export function noteClaudeCliHealth(
         `- Fix: make ${
           agentLabel ? `agent ${agentLabel}'s Claude project dir` : "the Claude project dir"
         } readable, or remove the broken path and let Claude recreate it.`,
+      );
+    }
+
+    // Excluded Claude auto memory stays on disk. This advisory carries no "- Fix:" so
+    // lint keeps it informational; it clears once the workspace holds a Claude import.
+    const nativeMemoryDir = path.join(target.projectDir, "memory");
+    const nativeMemoryFiles = excludesNativeMemory ? countMarkdownFiles(nativeMemoryDir) : 0;
+    if (
+      nativeMemoryFiles > 0 &&
+      probeDirectoryHealth(path.join(target.workspaceDir, "memory", "imports", "claude-code")) ===
+        "missing"
+    ) {
+      const memoryDisplay = shortenHomePath(nativeMemoryDir);
+      lines.push(
+        `- ${agentLabel ? `Agent ${agentLabel} ` : ""}Claude Code memory: ${nativeMemoryFiles} file(s) in ${memoryDisplay} are no longer loaded into agent turns. Import them into OpenClaw memory with ${formatCliCommand(
+          `openclaw migrate claude --agent ${target.agentId} --from ${formatCliPathArg(nativeMemoryDir)}`,
+        )}, or set plugins.entries.anthropic.config.claudeCli.excludeNativeMemory to false to keep loading them.`,
       );
     }
   }

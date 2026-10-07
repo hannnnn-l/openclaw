@@ -32,6 +32,15 @@ vi.mock("../agents/agent-runtime-metadata.js", async (importOriginal) => ({
   resolveModelAgentRuntimeMetadata: resolveModelAgentRuntimeMetadataMock,
 }));
 
+const LINT_SCENARIOS = [
+  "cyclic project",
+  "blocked workspace",
+  "readable",
+  "missing",
+  "native installation",
+  "excluded native memory",
+] as const;
+
 const defaultClaudeConfig = {
   agents: {
     defaults: { model: { primary: "claude-cli/claude-sonnet-4-6" } },
@@ -306,6 +315,43 @@ describe("noteClaudeCliHealth", () => {
     });
   });
 
+  it("points at the import for excluded Claude auto memory until the workspace has one", async () => {
+    await withTempHome(({ homeDir, workspaceDir }) => {
+      const projectDir = resolveClaudeCliProjectDirForWorkspace({ workspaceDir, homeDir });
+      const memoryDir = path.join(projectDir, "memory");
+      fs.mkdirSync(memoryDir, { recursive: true });
+      fs.writeFileSync(path.join(memoryDir, "MEMORY.md"), "- [Fact](fact.md)\n");
+      fs.writeFileSync(path.join(memoryDir, "fact.md"), "fact\n");
+      mockClaudeAuthentication(true);
+
+      const noteFn = vi.fn();
+      noteClaudeCliHealth(defaultClaudeConfig, { workspaceDir, noteFn });
+      const body = noteBody(noteFn);
+      expect(body).toContain("Claude Code memory: 2 file(s)");
+      expect(body).toContain(`openclaw migrate claude --agent main --from ${memoryDir}`);
+      expect(body).not.toContain("- Fix:");
+
+      const optedOut = vi.fn();
+      noteClaudeCliHealth(
+        {
+          ...defaultClaudeConfig,
+          plugins: {
+            entries: { anthropic: { config: { claudeCli: { excludeNativeMemory: false } } } },
+          },
+        },
+        { workspaceDir, noteFn: optedOut },
+      );
+      expect(optedOut).not.toHaveBeenCalled();
+
+      fs.mkdirSync(path.join(workspaceDir, "memory", "imports", "claude-code"), {
+        recursive: true,
+      });
+      const imported = vi.fn();
+      noteClaudeCliHealth(defaultClaudeConfig, { workspaceDir, noteFn: imported });
+      expect(imported).not.toHaveBeenCalled();
+    });
+  });
+
   it("reports when Claude CLI owns no active login", async () => {
     await withTempHome(({ workspaceDir }) => {
       const noteFn = vi.fn();
@@ -387,7 +433,7 @@ describe("noteClaudeCliHealth", () => {
   });
 
   // Registered CLI entry; routed by test/vitest/vitest.commands.config.ts.
-  it.each(["cyclic project", "blocked workspace", "readable", "missing", "native installation"])(
+  it.each(LINT_SCENARIOS)(
     "doctor --lint --only core/doctor/claude-cli reports %s at final output",
     async (scenario) => {
       clearHealthChecksForTest();
@@ -410,6 +456,10 @@ describe("noteClaudeCliHealth", () => {
           fs.symlinkSync(projectDir, projectDir, process.platform === "win32" ? "junction" : "dir");
         } else if (scenario === "readable") {
           fs.mkdirSync(projectDir);
+        } else if (scenario === "excluded native memory") {
+          // The import reminder is advisory: lint must stay clean.
+          fs.mkdirSync(path.join(projectDir, "memory"), { recursive: true });
+          fs.writeFileSync(path.join(projectDir, "memory", "MEMORY.md"), "- fact\n");
         }
         fs.writeFileSync(
           configPath,

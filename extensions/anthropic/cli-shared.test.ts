@@ -28,6 +28,11 @@ type ClaudePreparedExecutionWithSecret = {
 const CLAUDE_CLI_DISALLOWED_TOOLS =
   "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor";
 const CLAUDE_CACHE_FLAG = "--exclude-dynamic-system-prompt-sections";
+// Ordinary agent runs exclude Claude Code's own memory by default.
+const NATIVE_MEMORY_EXCLUSION_ARGS = [
+  "--settings",
+  '{"autoMemoryEnabled":false,"claudeMdExcludes":["**/CLAUDE.md","**/CLAUDE.local.md","**/.claude/rules/**"]}',
+];
 
 describe("Claude CLI adapter equivalence", () => {
   const commonArgs = [
@@ -286,7 +291,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
         useResume: false,
         baseArgs,
       }),
-    ).toEqual(baseArgs);
+    ).toEqual([...baseArgs, ...NATIVE_MEMORY_EXCLUSION_ARGS]);
   });
 
   it("denies every configured MCP tool when the allowlist is empty", () => {
@@ -337,7 +342,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
           useResume: false,
           baseArgs,
         }),
-      ).toEqual(baseArgs);
+      ).toEqual([...baseArgs, ...NATIVE_MEMORY_EXCLUSION_ARGS]);
     },
   );
 
@@ -351,7 +356,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
         useResume: false,
         baseArgs: ["-p", "--effort", "high"],
       }),
-    ).toEqual(["-p", "--effort", "low"]);
+    ).toEqual(["-p", "--effort", "low", ...NATIVE_MEMORY_EXCLUSION_ARGS]);
   });
 
   it.each([
@@ -371,7 +376,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
         useResume: false,
         baseArgs: ["-p"],
       }),
-    ).toEqual(["-p", "--effort", effort]);
+    ).toEqual(["-p", "--effort", effort, ...NATIVE_MEMORY_EXCLUSION_ARGS]);
   });
 
   it("strips configured effort args when thinking is adaptive", () => {
@@ -394,7 +399,15 @@ describe("resolveClaudeCliExecutionArgs", () => {
           "{sessionId}",
         ],
       }),
-    ).toEqual(["-p", "--output-format", "stream-json", "--verbose", "--resume", "{sessionId}"]);
+    ).toEqual([
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--resume",
+      "{sessionId}",
+      ...NATIVE_MEMORY_EXCLUSION_ARGS,
+    ]);
   });
 
   it("replaces static effort args when a session thinking level is active", () => {
@@ -407,7 +420,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
         useResume: false,
         baseArgs: ["-p", "--effort", "low", "--effort=high"],
       }),
-    ).toEqual(["-p", "--effort", "max"]);
+    ).toEqual(["-p", "--effort", "max", ...NATIVE_MEMORY_EXCLUSION_ARGS]);
   });
 
   it("forces isolated no-tool one-shot args for side-question execution", () => {
