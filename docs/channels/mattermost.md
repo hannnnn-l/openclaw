@@ -278,7 +278,7 @@ Mattermost marks every post created by a bot account with `from_bot`. OpenClaw u
 
 Account values override the channel-wide value. For an individual channel, `groups.<channelId>.allowBots` overrides `groups["*"].allowBots`, then the account value.
 
-Accepted bot posts pass through [bot loop protection](/channels/bot-loop-protection). When two bots exchange more than `maxEventsPerWindow` posts in one channel within `windowSeconds`, the receiving bot ignores the other one for `cooldownSeconds`. Set `channels.mattermost.botLoopProtection`, `channels.mattermost.accounts.<id>.botLoopProtection`, or `channels.mattermost.groups.<channelId>.botLoopProtection`; values merge key by key over `groups["*"]`, the account, and `channels.defaults.botLoopProtection`.
+Accepted bot posts pass through [bot loop protection](/channels/bot-loop-protection). When two bots exchange more than `maxEventsPerWindow` posts in one channel within `windowSeconds`, the receiving bot ignores the other one for `cooldownSeconds`. Set `channels.mattermost.botLoopProtection`, `channels.mattermost.accounts.<id>.botLoopProtection`, or `channels.mattermost.groups.<channelId>.botLoopProtection`; values merge key by key over `groups["*"]`, the account, and `channels.defaults.botLoopProtection`. Each suppressed post is logged as `mattermost: drop bot post (bot-loop-protection channel=<id> sender=<id>)`.
 
 The default budget (20 posts in 60 seconds) stops fast loops. Agent replies often take tens of seconds, so two agents sharing a channel can stay under it. For that setup, combine `allowBots: "mentions"` with a longer window:
 

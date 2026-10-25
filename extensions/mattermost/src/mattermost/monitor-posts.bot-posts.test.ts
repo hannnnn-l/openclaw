@@ -12,8 +12,12 @@ import type { OpenClawConfig } from "./runtime-api.js";
 const dispatch = vi.hoisted(() => vi.fn());
 const hasParticipation = vi.hoisted(() => vi.fn());
 
-vi.mock("./monitor-turn.js", () => ({ dispatchMattermostInboundTurn: dispatch }));
-vi.mock("./thread-participation.js", () => ({
+vi.mock("./monitor-turn.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./monitor-turn.js")>()),
+  dispatchMattermostInboundTurn: dispatch,
+}));
+vi.mock("./thread-participation.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./thread-participation.js")>()),
   hasMattermostThreadParticipationWithPersistence: hasParticipation,
 }));
 vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => ({

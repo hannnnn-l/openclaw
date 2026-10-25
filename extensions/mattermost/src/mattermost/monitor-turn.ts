@@ -372,6 +372,13 @@ export async function dispatchMattermostInboundTurn(
       channel: "mattermost",
       accountId: route.accountId,
       raw: post,
+      log: (event) => {
+        if (event.reason === "bot-loop-protection") {
+          runtime.log?.(
+            `mattermost: drop bot post (bot-loop-protection channel=${channelId} sender=${senderId})`,
+          );
+        }
+      },
       adapter: {
         ingest: () => ({
           id: post.id ?? `${to}:${Date.now()}`,
