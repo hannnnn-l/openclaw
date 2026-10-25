@@ -1,6 +1,7 @@
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import {
   isChannelPartialDeliveryError,
+  type ChannelBotLoopProtectionFacts,
   type ChannelInboundTurnPlan,
 } from "openclaw/plugin-sdk/channel-inbound";
 import {
@@ -43,6 +44,7 @@ type MattermostInboundTurnParams = {
   historyLimit: number;
   channelHistories: Map<string, HistoryEntry[]>;
   pinnedMainDmOwner: string | null;
+  botLoopProtection?: ChannelBotLoopProtectionFacts;
   turnAdoptionLifecycle?: MattermostIngressLifecycle;
 };
 
@@ -52,6 +54,7 @@ export async function dispatchMattermostInboundTurn(
 ): Promise<void> {
   const { account, cfg, client, core, runtime } = monitor;
   const {
+    botLoopProtection,
     channelHistories,
     ctxPayload,
     eventPlan,
@@ -388,6 +391,7 @@ export async function dispatchMattermostInboundTurn(
             sessionKey: route.sessionKey,
           },
           ctxPayload,
+          botLoopProtection,
           record: {
             updateLastRoute:
               kind === "direct"
