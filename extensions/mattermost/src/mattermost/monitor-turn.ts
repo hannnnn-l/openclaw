@@ -305,6 +305,7 @@ export async function dispatchMattermostInboundTurn(
         resolvePreviewFinalText,
         logVerboseMessage: monitor.logVerboseMessage,
         recordThreadParticipation: markThreadParticipation,
+        findPostAfterPreview: draftStream?.findPostAfter,
         deliverPayload: async (payloadToDeliver) => {
           const finalTextResolution =
             info.kind === "final" &&

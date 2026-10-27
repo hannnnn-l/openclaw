@@ -12,6 +12,7 @@ import type { MessageClientSource } from "../../../../src/chat/message-client-so
 import type { ClawHubRecommendation } from "../../../../src/shared/clawhub-recommendations.js";
 import type { RunFailureNotice } from "../../../../src/shared/run-failure-notice.js";
 import type { SkillWorkshopChangeNotice } from "../../../../src/shared/skill-workshop-change-notice.js";
+import type { CyberAccessProgram } from "../../api/types.ts";
 import type { BrowserTabTarget } from "../../components/browser/browser-target.ts";
 import type { IconName } from "../../components/icon-data.ts";
 import type { SenderIdentity } from "./sender-label.ts";
@@ -83,6 +84,8 @@ export type DurableDraftModelSelection = {
   model: string;
   agentRuntime?: string;
   thinkingLevel: string;
+  cyberAccessProgram?: CyberAccessProgram;
+  daybreakAccessProgram?: Exclude<CyberAccessProgram, "standard">;
 };
 
 export type DurableComposerDraft = {
@@ -94,6 +97,8 @@ export type DurableComposerDraft = {
   modelSelection?: DurableDraftModelSelection;
   attachments: DurableComposerDraftAttachment[];
   questionDrafts?: DurableQuestionDraft[];
+  /** Context-only comments have no uploaded file payload. */
+  selectionAnnotations?: ChatSelectionAnnotation[];
 };
 
 export type ChatComposerDraftRetry = {
@@ -214,7 +219,6 @@ export type ChatItem =
       kind: "message";
       key: string;
       message: unknown;
-      duplicateCount?: number;
       /** A distinct input remains a presentation boundary before execution starts. */
       startsTurn?: true;
     }
@@ -241,6 +245,8 @@ export type ChatItem =
       /** Total identical failures represented by the latest display notice. */
       repeatCount?: number;
       permissionMissing?: NodePermissionRequest;
+      /** Retained input that ended interrupted or cancelled and may be dismissed. */
+      retiredPendingInput?: { id: string; status: "interrupted" | "cancelled"; preview: string };
     }
   | {
       kind: "divider";
@@ -367,7 +373,6 @@ export type MessageGroup = {
   messages: Array<{
     message: unknown;
     key: string;
-    duplicateCount?: number;
     replyTarget?: NormalizedMessage["replyTarget"];
     /** Rendered reply content, excluding assistant thinking tags. */
     hasVisibleContent: boolean;
@@ -493,6 +498,8 @@ export type ToolCard = {
   resultMessageId?: string;
   /** Gateway display projection omitted content; the durable result may still be complete. */
   outputTruncated?: boolean;
+  /** Bounded external preview; does not authorize full-message recovery. */
+  catalogTruncated?: boolean;
   toolOutput?: ToolOutputMetadata;
   /** Structured tool result details (e.g. the edit tool's precomputed diff). */
   details?: unknown;
@@ -523,6 +530,7 @@ export type ToolCardOutcome =
   | "failed"
   | "blocked"
   | "skipped"
+  | "unrecorded"
   | "unknown";
 
 export type ChatGoalMutationAction = { goalId: string } & (

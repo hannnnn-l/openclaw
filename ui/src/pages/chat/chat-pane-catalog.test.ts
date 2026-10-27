@@ -9,17 +9,18 @@ import type {
 } from "../../../../packages/gateway-protocol/src/index.js";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
+import { extractToolCardsCached } from "../../lib/chat/tool-cards.ts";
 import { buildCatalogSessionKey, type CatalogSessionKey } from "../../lib/sessions/catalog-key.ts";
 import type { SessionCapability } from "../../lib/sessions/index.ts";
 import { createApplicationContextProvider } from "../../test-helpers/application-context.ts";
-import { catalogList } from "./chat-pane-catalog.test-support.ts";
-import { createRefreshChatPane } from "./chat-pane-history.test-support.ts";
-import { consumePaneSessionHandoff } from "./chat-pane-shared.ts";
 import {
   createGatewayBrowserClientFixture,
   createSessionContext,
-  createTestChatPane,
-} from "./chat-pane.test-support.ts";
+} from "./chat-application-context.test-support.ts";
+import { catalogList } from "./chat-pane-catalog.test-support.ts";
+import { createRefreshChatPane } from "./chat-pane-history.test-support.ts";
+import { consumePaneSessionHandoff } from "./chat-pane-shared.ts";
+import { createTestChatPane } from "./chat-pane.test-support.ts";
 import * as chatThreadBuild from "./chat-thread-build.ts";
 import { renderChatPropsInto } from "./chat-view.test-helpers.ts";
 import {
@@ -187,21 +188,31 @@ describe("chat pane catalog", () => {
 
     await pane.loadCatalogSession(key, false);
 
-    expect(request).toHaveBeenNthCalledWith(2, "sessions.catalog.list", {
-      agentId: "main",
-      catalogId: key.catalogId,
-      hostIds: [key.hostId],
-      limitPerHost: 100,
-      cursors: { [key.hostId]: "page-2" },
-    });
-    expect(request).toHaveBeenNthCalledWith(3, "sessions.catalog.read", {
-      agentId: "main",
-      catalogId: key.catalogId,
-      hostId: key.hostId,
-      threadId: key.threadId,
-      sourceHomeId: "source-home-a",
-      limit: 50,
-    });
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      "sessions.catalog.list",
+      {
+        agentId: "main",
+        catalogId: key.catalogId,
+        hostIds: [key.hostId],
+        limitPerHost: 100,
+        cursors: { [key.hostId]: "page-2" },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      3,
+      "sessions.catalog.read",
+      {
+        agentId: "main",
+        catalogId: key.catalogId,
+        hostId: key.hostId,
+        threadId: key.threadId,
+        sourceHomeId: "source-home-a",
+        limit: 50,
+      },
+      { signal: expect.any(AbortSignal) },
+    );
     expect(pane.history.catalogSession).toEqual(selectedSession);
   });
 
@@ -233,18 +244,141 @@ describe("chat pane catalog", () => {
     expect(pane.history.catalogMessages).toEqual([]);
   });
 
-  it.each<[string, SessionCatalogTranscriptItem, string]>([
-    [
-      "raw tool command",
-      { type: "toolCall", raw: { command: "git status --short" } },
-      "Tool call\n\ngit status --short",
-    ],
-    ["empty reasoning", { type: "reasoning" }, "Thinking"],
-  ])("renders %s", (_name, item, expected) => {
-    const { pane } = createCatalogContinuationPane(vi.fn());
+  it.each(["lookup", "transcript"] as const)(
+    "retires a hidden catalog %s without clearing its successor",
+    async (stage) => {
+      const oldLookup = createDeferred<ReturnType<typeof catalogList>>();
+      const oldPage = createDeferred<SessionsCatalogReadResult>();
+      const currentPage = createDeferred<SessionsCatalogReadResult>();
+      const listed = catalogList(catalogKey, [catalogSession]);
+      const page = (text: string): SessionsCatalogReadResult => ({
+        ...catalogKey,
+        items: [{ id: text, type: "userMessage", text }],
+      });
+      let lists = 0;
+      let pages = 0;
+      let retiredSignal: AbortSignal | undefined;
+      const request = vi.fn(
+        (method: string, _params: unknown, options?: { signal?: AbortSignal }) => {
+          if (method === "sessions.catalog.list") {
+            if (lists++ === 0 && stage === "lookup") {
+              retiredSignal = options?.signal;
+              return oldLookup.promise;
+            }
+            return Promise.resolve(listed);
+          }
+          if (method === "sessions.catalog.read") {
+            if (pages++ === 0 && stage === "transcript") {
+              retiredSignal = options?.signal;
+              return oldPage.promise;
+            }
+            return currentPage.promise;
+          }
+          return Promise.resolve({});
+        },
+      );
+      const { pane, state } = createCatalogPane(request, catalogKey, true);
+      onTestFinished(() => {
+        oldLookup.resolve(listed);
+        oldPage.resolve(page("Old"));
+        currentPage.resolve(page("Current"));
+      });
+      const pending = pane.loadCatalogSession(catalogKey, false);
+      await vi.waitFor(() => expect(retiredSignal).toBeDefined());
+      pane.presented = false;
+      expect(retiredSignal?.aborted).toBe(true);
+      pane.presented = true;
+      await vi.waitFor(() => expect(pages).toBe(stage === "lookup" ? 1 : 2));
+      expect(pane.history.catalogLoading).toBe(true);
+      oldLookup.resolve(listed);
+      oldPage.resolve(page("Old"));
+      await expect(pending).resolves.toBe(false);
+      expect(pane.history.catalogLoading).toBe(true);
+      expect(pane.history.catalogMessages).toEqual([]);
+      currentPage.resolve(page("Current"));
+      await vi.waitFor(() => expect(pane.history.catalogLoading).toBe(false));
+      expect(pane.history.catalogMessages).toHaveLength(1);
+      expect(state.chatError).toBeNull();
+    },
+  );
 
-    expect(pane.catalogItemMessage(item)).toMatchObject({
-      content: [{ type: "text", text: expected }],
+  it("does not spend an aborted catalog older cursor or cancel its continuation write", async () => {
+    const abandoned = createDeferred<SessionsCatalogReadResult>();
+    const continued = createDeferred<{ sessionKey: string }>();
+    const page: SessionsCatalogReadResult = { ...catalogKey, items: [], nextCursor: "cursor-2" };
+    let signal: AbortSignal | undefined;
+    let reads = 0;
+    const request = vi.fn(
+      (method: string, _params: unknown, options?: { signal?: AbortSignal }) => {
+        if (method === "sessions.catalog.continue") {
+          return continued.promise;
+        }
+        if (method === "sessions.catalog.read") {
+          signal = options?.signal;
+          return reads++ === 0 ? abandoned.promise : Promise.resolve(page);
+        }
+        return Promise.resolve(catalogList(catalogKey, [catalogSession]));
+      },
+    );
+    const { pane, key, state } = createCatalogContinuationPane(request);
+    onTestFinished(() => {
+      abandoned.resolve(page);
+      continued.resolve({ sessionKey: "agent:main:continued" });
+    });
+    pane.history.catalogCursor = "cursor-1";
+    const pending = pane.loadCatalogSession(key, true);
+    const continuing = pane.continueCatalogSession(key);
+    await vi.waitFor(() => expect(reads).toBe(1));
+    pane.presented = false;
+    expect(signal?.aborted).toBe(true);
+    expect(
+      request.mock.calls.find(([method]) => method === "sessions.catalog.continue")?.[2],
+    ).toBeUndefined();
+    abandoned.resolve(page);
+    await expect(pending).resolves.toBe(false);
+    expect(pane.history.catalogCursor).toBe("cursor-1");
+    pane.presented = true;
+    await expect(pane.loadCatalogSession(key, true)).resolves.toBe(true);
+    expect(pane.history.catalogCursor).toBe("cursor-2");
+    // A fresh presentation read must not invalidate the in-flight adopted-send owner.
+    await pane.loadCatalogSession(key, false);
+    continued.resolve({ sessionKey: "agent:main:continued" });
+    await continuing;
+    expect(pane.onPaneSessionChange).toHaveBeenCalledWith("single", "agent:main:continued");
+    expect(
+      consumePaneSessionHandoff(pane.context, pane.paneId, "agent:main:continued"),
+    ).toMatchObject({
+      draft: "Continue the original catalog conversation",
+      send: true,
+    });
+    expect(state.handleSendChat).not.toHaveBeenCalled();
+  });
+
+  it("keeps raw and structured tool inputs visible without call IDs", () => {
+    const { pane } = createCatalogPane(vi.fn());
+    expect(
+      pane.catalogItemMessage({ type: "toolCall", raw: { command: "git status --short" } }),
+    ).toMatchObject({
+      content: [{ type: "toolCall", arguments: "git status --short" }],
+    });
+    expect(
+      extractToolCardsCached(
+        pane.catalogItemMessage({ type: "toolResult", toolInput: { count: 2 }, text: "done" }),
+      ),
+    ).toMatchObject([{ args: { count: 2 }, outputText: "done", completed: true }]);
+  });
+
+  it("keeps reasoning in thinking content and omits empty placeholders", () => {
+    const { pane } = createCatalogPane(vi.fn());
+    expect(pane.catalogItemMessage({ type: "reasoning" })).toBeNull();
+    expect(pane.catalogItemMessage({ type: "reasoning", truncated: true })).toMatchObject({
+      content: [{ type: "thinking", thinking: "…" }],
+      __openclaw: { catalogTruncated: true },
+    });
+    expect(
+      pane.catalogItemMessage({ type: "reasoning", text: "Check the evidence." }),
+    ).toMatchObject({
+      content: [{ type: "thinking", thinking: "Check the evidence." }],
     });
   });
 
@@ -256,7 +390,13 @@ describe("chat pane catalog", () => {
     const original = structuredClone(item);
 
     expect(pane.catalogItemMessage(item)).toMatchObject({
-      content: [{ type: "text", text: `Tool result\n\n${preview}\n\n[Output truncated]` }],
+      content: [
+        {
+          type: "toolResult",
+          content: [{ type: "text", text: preview }],
+        },
+      ],
+      __openclaw: { catalogTruncated: true },
     });
     expect(item).toEqual(original);
   });
