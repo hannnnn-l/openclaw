@@ -304,12 +304,11 @@ describe("streamWithIdleTimeout", () => {
     await iterator.return?.();
   });
 
-  it.each(["structural", "notified"] as const)(
-    "restores the full idle budget after pre-stream tool activity (%s progress)",
+  it.each(["structural", "notified", "skew"] as const)(
+    "restores the full idle budget after pre-stream tool activity (%s)",
     async (progress) => {
-      let signal: AbortSignal | undefined;
       const chunks =
-        progress === "structural"
+        progress !== "notified"
           ? ([
               [10, "first"],
               [55, "second"],
@@ -317,23 +316,23 @@ describe("streamWithIdleTimeout", () => {
               [145, "fourth"],
             ] as const)
           : ([[80, "late"]] as const);
-      const baseFn: StreamFn = (_model, _context, options) => {
-        signal = options?.signal;
-        const source = createAssistantMessageEventStream();
-        for (const [delay, delta] of chunks) {
-          setTimeout(() => source.push(textDelta(delta)), delay);
-        }
-        return source;
-      };
       // The stale timestamp must be consumed once, not shorten later budgets.
+      vi.advanceTimersByTime(1);
       notifyToolActivity(TEST_RUN);
       vi.advanceTimersByTime(20);
-      const stream = await openStream(baseFn, undefined, { runId: TEST_RUN });
-      const iterator = stream[Symbol.asyncIterator]();
+      if (progress === "skew") {
+        vi.setSystemTime(Date.now() + 29);
+      }
+      const source = createAssistantMessageEventStream();
+      for (const [delay, delta] of chunks) {
+        setTimeout(() => source.push(textDelta(delta)), delay);
+      }
+      const watched = sourceFixture(source, { runId: TEST_RUN });
+      const iterator = (await watched.stream)[Symbol.asyncIterator]();
       if (progress === "notified") {
         const next = iterator.next();
-        setTimeout(() => notifyLlmRequestActivity(signal), 20);
-        setTimeout(() => notifyLlmRequestActivity(signal), 40);
+        setTimeout(() => notifyLlmRequestActivity(watched.signal()), 20);
+        setTimeout(() => notifyLlmRequestActivity(watched.signal()), 40);
         await expectDelta(next, 80, "late");
       } else {
         await expectDelta(iterator.next(), 10, "first");
